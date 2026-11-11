@@ -1,0 +1,57 @@
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: #17171d;
+}
+
+body {
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.inspector {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  z-index: 10;
+  width: min(320px, calc(100vw - 24px));
+  max-height: calc(100vh - 24px);
+  overflow: auto;
+  padding: 12px;
+  box-sizing: border-box;
+  color: #f3ddd3;
+  background: rgba(23, 23, 29, 0.96);
+  border: 1px solid #8e6874;
+  font: 12px/1.35 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.inspector__header { display: flex; justify-content: space-between; align-items: center; font-size: 14px; }
+.inspector button { color: inherit; background: transparent; border: 0; font-size: 20px; cursor: pointer; }
+.inspector__hint { color: #c7a8a4; margin: 8px 0 12px; }
+.inspector__check { display: flex; align-items: center; gap: 7px; margin: 8px 0 12px; color: #fff; }
+.inspector__actions { display: flex; align-items: center; gap: 8px; margin: 12px 0; }
+.inspector__actions button { padding: 5px 8px; color: #17171d; background: #c7a8a4; font: inherit; border: 0; cursor: pointer; }
+.inspector__actions span { color: #c7a8a4; }
+.inspector__row { display: grid; grid-template-columns: 1fr 52px; gap: 4px 8px; margin: 10px 0; }
+.inspector__number { width: 72px; box-sizing: border-box; color: #fff; background: #2d2229; border: 1px solid #8e6874; font: inherit; text-align: right; }
+.inspector__range { grid-column: 1 / -1; width: 100%; accent-color: #c7a8a4; }
+.inspector__telemetry { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; margin: 14px 0 0; padding-top: 10px; border-top: 1px solid #543642; }
+.inspector__telemetry dd { margin: 0; text-align: right; color: #fff; }
