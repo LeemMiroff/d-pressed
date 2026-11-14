@@ -43,4 +43,7 @@ function settingsPlugin() {
   };
 }
 
-export default defineConfig({ plugins: [settingsPlugin()] });
+export default defineConfig({
+  base: './',
+  plugins: [settingsPlugin()],
+});
