@@ -342,6 +342,13 @@ export class CrystalManager {
     this.burstCoins.length = 0;
   }
 
+  clearPlatform(platform) {
+    const group = this.crystalsByPlatform.find((candidate) => candidate.platform === platform);
+    if (!group) return;
+    group.left.reset();
+    group.right.reset();
+  }
+
   spawnBurstCoins(parent, centerX, floorY, count = this.config.chestCoinCount, platformEntity = null) {
     const spacing = this.config.chestCoinMinimumGap;
     const centerOffset = (count - 1) * 0.5;
@@ -374,6 +381,11 @@ export class CrystalManager {
 
   spawnForPlatform(group) {
     const { platform, left, right } = group;
+    if (platform.portalPlatform || platform.hubEntryOnly || platform.spawnContent?.crystals === false) {
+      left.reset();
+      right.reset();
+      return;
+    }
     left.prepareForRespawn();
     right.prepareForRespawn();
     if (!platform.active) {
@@ -381,12 +393,6 @@ export class CrystalManager {
       right.cancelPendingSpawn();
       return;
     }
-    if (platform.hubEntryOnly) {
-      left.cancelPendingSpawn();
-      right.cancelPendingSpawn();
-      return;
-    }
-
     const touchesLeftWall = platform.x === 0;
     const touchesRightWall = platform.x + platform.width >= this.game.config.world.width;
     if (touchesLeftWall) {

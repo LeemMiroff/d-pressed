@@ -45,6 +45,7 @@ export class PortalManager {
   constructor(game) {
     this.game = game;
     this.nextPortalTime = 60;
+    this.nextPortalPattern = 20;
     this.portalPair = null;
     this.hubX = 0;
     this.hubWidth = game.config.world.width * 0.8;
@@ -80,7 +81,8 @@ export class PortalManager {
     this.transitionPhase = null;
     this.transitionNode.visible = false;
     for (const platform of this.game.platformPool.items) platform.node.visible = true;
-    this.nextPortalTime = Math.max(60, this.game.difficultyTime + 60);
+    const interval = Math.max(1, this.game.config.platforms.hubPortal?.everyPatterns || 20);
+    this.nextPortalPattern = this.game.platformPool.patternCount + interval;
   }
 
   resizeWorld(height) {
@@ -106,8 +108,11 @@ export class PortalManager {
 
     this.updateMovingHub(deltaSeconds);
 
-    if (!this.portalPair && this.game.difficultyTime >= this.nextPortalTime) {
-      if (this.spawnPortalPair()) this.nextPortalTime += 60;
+    const portalConfig = this.game.config.platforms.hubPortal || {};
+    if (portalConfig.enabled !== false && !this.portalPair && this.game.platformPool.patternCount >= this.nextPortalPattern) {
+      if (this.spawnPortalPair()) {
+        this.nextPortalPattern += Math.max(1, portalConfig.everyPatterns || 20);
+      }
     }
     if (!this.portalPair) return;
     const player = this.game.player;
@@ -137,6 +142,13 @@ export class PortalManager {
     )) || this.game.platformPool.createPortalPair();
     if (!group) return false;
     group.isPortalPair = true;
+    for (const platform of group) {
+      this.game.enemyManager?.enemies
+        .filter((enemy) => enemy.platform === platform)
+        .forEach((enemy) => { enemy.node.visible = false; });
+      this.game.crystalManager?.clearPlatform(platform);
+      this.game.chestManager?.clearPlatform(platform);
+    }
     this.portalPair = group.map((platform, index) => new PortalEntity(platform, index === 0 ? 'left' : 'right'));
     return true;
   }

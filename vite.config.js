@@ -2,6 +2,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { defineConfig } from 'vite';
 
 const SETTINGS_FILE = new URL('./settings.json', import.meta.url);
+const PUBLIC_SETTINGS_FILE = new URL('./public/settings.json', import.meta.url);
 
 function settingsPlugin() {
   return {
@@ -25,7 +26,11 @@ function settingsPlugin() {
         request.on('end', async () => {
           try {
             const settings = JSON.parse(body);
-            await writeFile(SETTINGS_FILE, `${JSON.stringify(settings, null, 2)}\n`, 'utf8');
+            const serialized = `${JSON.stringify(settings, null, 2)}\n`;
+            await Promise.all([
+              writeFile(SETTINGS_FILE, serialized, 'utf8'),
+              writeFile(PUBLIC_SETTINGS_FILE, serialized, 'utf8'),
+            ]);
             response.setHeader('Content-Type', 'application/json');
             response.end(JSON.stringify({ ok: true }));
           } catch {

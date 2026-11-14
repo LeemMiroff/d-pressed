@@ -59,7 +59,7 @@ class Enemy {
     this.node.alpha = 1;
     this.node.scale.set(1, 1);
     this.setFrame(0);
-    if (this.platform.hubEntryOnly) {
+    if (this.platform.hubEntryOnly || this.platform.spawnContent?.enemy === false) {
       this.node.visible = false;
       return;
     }
@@ -181,7 +181,6 @@ export class EnemyManager {
       ),
     }));
     for (let index = 0; index < game.platformPool.items.length; index += 1) {
-      if (index % 2 !== 1) continue;
       const enemy = new Enemy(
         game.platformPool.items[index],
         game.worldRoot,
@@ -208,7 +207,8 @@ export class EnemyManager {
     for (const enemy of this.enemies) {
       if (enemy.platform.recycledThisFrame && !enemy.dying) {
         if (enemy.platform.portalPlatform) enemy.node.visible = false;
-        else enemy.configure(3);
+        else if (enemy.platform.spawnContent?.enemy) enemy.configure(3);
+        else enemy.node.visible = false;
       }
       const defeated = enemy.tryHit(
         this.previousPlayerCenterX,

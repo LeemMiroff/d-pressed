@@ -92,7 +92,7 @@ export class Game {
       this.doublePlatformsDisabled = false;
     }
     this.platformPool.setProgression(this.difficultyTime);
-    this.platformPool.initialize();
+    this.platformPool.initialize(preserveProgression);
     this.worldSpeed = preserveProgression ? preservedWorldSpeed : this.config.platforms.initialWorldSpeed;
     this.player.vx = 0;
     this.player.vy = 0;

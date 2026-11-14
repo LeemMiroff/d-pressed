@@ -38,6 +38,9 @@ export class PlatformEntity {
     this.beforeRecycle = null;
     this.allowWallContact = false;
     this.hubEntryOnly = false;
+    this.patternType = 'SINGLE';
+    this.patternIndex = 0;
+    this.spawnContent = { enemy: false, crystals: false, chest: false };
   }
 
   configure(x, y, width, allowWallContact = false) {
@@ -119,6 +122,10 @@ export class PlatformPool {
     this.groups = [];
     this.progression = 0;
     this.pairProgression = 0;
+    this.patternCount = 0;
+    this.lastPatternType = null;
+    this.patternRepeatCount = 0;
+    this.activeRunTime = 0;
 
     for (let index = 0; index < config.poolSize; index += 1) {
       const platform = new PlatformEntity(config, texture, worldConfig.width);
@@ -133,26 +140,32 @@ export class PlatformPool {
     for (const platform of this.items) platform.setHitboxVisible(visible);
   }
 
-  initialize() {
+  initialize(preserveProgress = false) {
     let previousPlatform = null;
     let y = this.config.startY;
     this.initialStates.length = 0;
     this.groups = [];
+    if (!preserveProgress) {
+      this.patternCount = 0;
+      this.lastPatternType = null;
+      this.patternRepeatCount = 0;
+    }
 
     for (let index = 0; index < this.items.length; index += 1) {
       const startPlatformIndex = this.playerConfig.startPlatformIndex;
       const wouldPairStartPlatform = index === startPlatformIndex || index + 1 === startPlatformIndex;
+      const requestedType = this.choosePatternType();
       const canPair = index < this.items.length - 1
         && index % 2 === 0
         && !wouldPairStartPlatform
         && this.config.enablePairedPlatforms
-        && Math.random() < this.config.pairedPlatformChance * (1 - this.pairProgression);
+        && requestedType === 'DOUBLE';
       if (canPair) {
         if (previousPlatform) {
           y -= randomBetween(this.config.minGap, this.config.maxGap);
         }
-        const leftWidth = Math.floor(randomBetween(28, 58));
-        const rightWidth = Math.floor(randomBetween(28, 58));
+        const leftWidth = this.randomWidth();
+        const rightWidth = this.randomWidth();
         const minimumGap = 16;
         const availableWidth = this.worldConfig.width - minimumGap;
         const widthScale = Math.min(1, availableWidth / (leftWidth + rightWidth));
@@ -167,6 +180,8 @@ export class PlatformPool {
           { x: rightPlatform.x, y: rightPlatform.y, width: rightPlatform.width },
         );
         this.groups.push([leftPlatform, rightPlatform]);
+        this.configurePatternContent([leftPlatform, rightPlatform], 'DOUBLE');
+        if (!preserveProgress) this.registerPattern('DOUBLE');
         previousPlatform = rightPlatform;
         index += 1;
         continue;
@@ -179,12 +194,16 @@ export class PlatformPool {
       if (previousPlatform) {
         const gap = randomBetween(this.config.minGap, this.config.maxGap);
         y -= gap;
-        const x = isEarly && !useSmall
-          ? this.randomPlatformX(width)
+        const x = requestedType === 'WALL'
+          ? (Math.random() < 0.5 ? 0 : this.worldConfig.width - width)
+          : isEarly && !useSmall
+            ? this.randomPlatformX(width)
           : this.reachableX(previousPlatform, width, gap);
         platform.configure(x, y, width, true);
       } else {
-        const x = this.randomPlatformX(width);
+        const x = requestedType === 'WALL'
+          ? (Math.random() < 0.5 ? 0 : this.worldConfig.width - width)
+          : this.randomPlatformX(width);
         platform.configure(x, y, width, true);
       }
 
@@ -195,6 +214,10 @@ export class PlatformPool {
         width: platform.width,
       });
       this.groups.push([platform]);
+      const patternType = requestedType === 'WALL' ? 'WALL' : 'SINGLE';
+      platform.patternType = patternType;
+      this.configurePatternContent([platform], patternType);
+      if (!preserveProgress) this.registerPattern(patternType);
     }
     this.assignGroupSlots();
   }
@@ -304,7 +327,7 @@ export class PlatformPool {
     }, null);
 
     while (true) {
-      const group = this.groups.find(isOffscreen);
+      let group = this.groups.find(isOffscreen);
       if (!group) return;
       const lowestPlatform = findLowestPlatform(group);
       if (!lowestPlatform) {
@@ -317,27 +340,51 @@ export class PlatformPool {
       const gap = randomBetween(this.config.minGap, this.config.maxGap);
       const y = lowestPlatform.y + this.config.height + gap;
       const groupIndex = this.groups.indexOf(group);
+      let requestedType = this.choosePatternType();
+      if (!this.config.enablePairedPlatforms && requestedType === 'DOUBLE') requestedType = 'SINGLE';
+      if (group.length === 1 && requestedType === 'DOUBLE') {
+        const partner = this.groups.find((candidate) => candidate !== group && candidate.length === 1 && isOffscreen(candidate));
+        if (partner) {
+          const originalGroup = group;
+          group = [group[0], partner[0]];
+          group.isPortalPair = false;
+          this.groups.splice(this.groups.indexOf(partner), 1);
+          this.groups.splice(this.groups.indexOf(originalGroup), 1, group);
+          requestedType = 'DOUBLE';
+        } else {
+          requestedType = 'SINGLE';
+        }
+      }
       group.forEach((platform) => platform.beforeRecycle?.());
       group.forEach((platform) => {
         platform.hubEntryOnly = false;
         platform.portalPlatform = false;
       });
+      if (group.length > 1 && requestedType !== 'DOUBLE') {
+        const first = group[0];
+        const second = group[1];
+        const firstWidth = this.progression < 1 ? this.randomProgressiveWidth() : this.randomWidth();
+        const secondWidth = this.progression < 1 ? this.randomProgressiveWidth() : this.randomWidth();
+        const firstX = requestedType === 'WALL'
+          ? (Math.random() < 0.5 ? 0 : this.worldConfig.width - firstWidth)
+          : this.randomPlatformX(firstWidth);
+        const secondY = y + this.config.height + this.config.minGap;
+        first.configure(firstX, y, firstWidth, true);
+        second.configure(this.randomPlatformX(secondWidth), secondY, secondWidth, true);
+        const firstGroup = [first];
+        const secondGroup = [second];
+        this.groups.splice(this.groups.indexOf(group), 1, firstGroup, secondGroup);
+        this.configurePatternContent(firstGroup, requestedType);
+        this.configurePatternContent(secondGroup, requestedType);
+        this.registerPattern(requestedType);
+        this.registerPattern(requestedType);
+        first.recycledThisFrame = true;
+        second.recycledThisFrame = true;
+        continue;
+      }
       if (group.length > 1) {
-        if (this.pairProgression >= 1 && !group.isPortalPair) {
-          const first = group[0];
-          const second = group[1];
-          const firstWidth = this.randomWidth();
-          const secondWidth = this.randomWidth();
-          first.configure(this.reachableX(lowestPlatform, firstWidth, gap), y, firstWidth, true);
-          const secondY = y + this.config.height + this.config.minGap;
-          second.configure(this.reachableX(first, secondWidth, this.config.minGap), secondY, secondWidth, true);
-          first.recycledThisFrame = true;
-          second.recycledThisFrame = true;
-          this.groups.splice(groupIndex, 1, [first], [second]);
-          continue;
-        }
-        const leftWidth = Math.floor(randomBetween(28, 58));
-        const rightWidth = Math.floor(randomBetween(28, 58));
+        const leftWidth = this.randomWidth();
+        const rightWidth = this.randomWidth();
         const scale = Math.min(1, (this.worldConfig.width - 16) / (leftWidth + rightWidth));
         const scaledLeftWidth = Math.floor(leftWidth * scale);
         const scaledRightWidth = Math.floor(rightWidth * scale);
@@ -345,11 +392,16 @@ export class PlatformPool {
         group[1].configure(this.worldConfig.width - scaledRightWidth, y, scaledRightWidth, true);
       } else {
         const width = this.progression < 1 ? this.randomProgressiveWidth() : this.randomWidth();
-        const x = Math.random() < 0.5
-          ? this.randomPlatformX(width)
+        const x = requestedType === 'WALL'
+          ? (Math.random() < 0.5 ? 0 : this.worldConfig.width - width)
+          : Math.random() < 0.5
+            ? this.randomPlatformX(width)
           : this.reachableX(lowestPlatform, width, gap);
         group[0].configure(x, y, width, true);
       }
+      const type = requestedType;
+      this.configurePatternContent(group, type);
+      this.registerPattern(type);
       group.forEach((platform) => { platform.recycledThisFrame = true; });
     }
   }
@@ -379,8 +431,11 @@ export class PlatformPool {
     second.beforeRecycle?.();
     first.portalPlatform = true;
     second.portalPlatform = true;
-    const leftWidth = this.randomWidth();
-    const rightWidth = this.randomWidth();
+    first.spawnContent = { enemy: false, crystals: false, chest: false };
+    second.spawnContent = { enemy: false, crystals: false, chest: false };
+    const portalWidthRatio = Math.max(0.2, Math.min(0.49, this.config.hubPortal?.platformWidthRatio || 0.4));
+    const leftWidth = Math.floor(this.worldConfig.width * portalWidthRatio);
+    const rightWidth = Math.floor(this.worldConfig.width * portalWidthRatio);
     first.configure(0, baseY, leftWidth, true);
     second.configure(this.worldConfig.width - rightWidth, baseY, rightWidth, true);
     first.recycledThisFrame = true;
@@ -397,7 +452,10 @@ export class PlatformPool {
   }
 
   randomWidth() {
-    return Math.floor(randomBetween(this.config.minWidth, this.config.maxWidth + 1));
+    const scale = this.currentPlatformScale();
+    const minimum = Math.max(8, Math.floor(this.config.minWidth));
+    const maximum = Math.max(minimum, Math.floor(this.config.maxWidth * scale));
+    return Math.floor(randomBetween(minimum, maximum + 1));
   }
 
   randomPlatformX(width) {
@@ -414,13 +472,84 @@ export class PlatformPool {
   }
 
   setProgression(elapsedSeconds) {
+    this.activeRunTime = Math.max(0, elapsedSeconds);
     this.progression = Math.min(1, elapsedSeconds / this.config.platformProgressionDuration);
     this.pairProgression = Math.min(1, elapsedSeconds / this.config.pairedPlatformDuration);
   }
 
+  currentPlatformScale() {
+    const size = this.config.platformSize || {};
+    const startScale = Number.isFinite(size.startScale) ? size.startScale : 1;
+    const minScale = Number.isFinite(size.minScale) ? size.minScale : 0.55;
+    const duration = Number.isFinite(size.shrinkDurationSeconds) ? size.shrinkDurationSeconds : 0;
+    if (duration > 0) {
+      const progress = Math.min(1, this.activeRunTime / duration);
+      return startScale + (minScale - startScale) * progress;
+    }
+    const shrink = Number.isFinite(size.shrinkPerPattern) ? size.shrinkPerPattern : 0;
+    return Math.max(minScale, startScale - this.patternCount * shrink);
+  }
+
+  choosePatternType() {
+    const weights = this.config.patternWeights || { SINGLE: 1, WALL: 0, DOUBLE: 0 };
+    const candidates = ['SINGLE', 'WALL', 'DOUBLE'];
+    let available = candidates.filter((type) => type !== 'DOUBLE' || this.config.enablePairedPlatforms);
+    if (this.lastPatternType && this.patternRepeatCount >= (this.config.maxPatternRepeat ?? 2)) {
+      available = available.filter((type) => type !== this.lastPatternType);
+    }
+    const total = available.reduce((sum, type) => sum + Math.max(0, Number(weights[type]) || 0), 0);
+    if (!total) return available[0] || 'SINGLE';
+    let roll = Math.random() * total;
+    for (const type of available) {
+      roll -= Math.max(0, Number(weights[type]) || 0);
+      if (roll <= 0) return type;
+    }
+    return available[available.length - 1];
+  }
+
+  registerPattern(type) {
+    this.patternCount += 1;
+    if (this.lastPatternType === type) this.patternRepeatCount += 1;
+    else {
+      this.lastPatternType = type;
+      this.patternRepeatCount = 1;
+    }
+  }
+
+  configurePatternContent(group, type) {
+    const content = this.config.content?.[type] || {};
+    if (type === 'DOUBLE') {
+      const variants = content.variants?.length ? content.variants : [{ weight: 1, enemy: { guaranteed: true, side: 'random' }, oppositeSide: {} }];
+      const total = variants.reduce((sum, variant) => sum + Math.max(0, Number(variant.weight) || 0), 0);
+      let roll = Math.random() * (total || 1);
+      let variant = variants[0];
+      for (const candidate of variants) {
+        roll -= Math.max(0, Number(candidate.weight) || 0);
+        if (roll <= 0) { variant = candidate; break; }
+      }
+      const enemySide = variant.enemy?.side === 'left' ? 0 : variant.enemy?.side === 'right' ? 1 : Math.random() < 0.5 ? 0 : 1;
+      const opposite = variant.oppositeSide || {};
+      const chest = Math.random() < (Number(opposite.chestChance) || 0);
+      const crystal = !chest && Math.random() < (Number(opposite.crystalChanceIfNoChest) || 0);
+      group.forEach((platform, index) => {
+        platform.patternType = type;
+        platform.spawnContent = { enemy: Boolean(variant.enemy?.guaranteed) && index === enemySide, crystals: crystal && index !== enemySide, chest: chest && index !== enemySide };
+      });
+      return;
+    }
+    const enemy = Math.random() < (Number(content.enemyChance) || 0);
+    const crystals = Math.random() < (Number(content.crystalChance) || 0);
+    const chest = Math.random() < (Number(content.chestChance) || 0);
+    for (const platform of group) {
+      platform.patternType = type;
+      platform.spawnContent = { enemy, crystals, chest };
+    }
+  }
+
   randomProgressiveWidth() {
-    const minWidth = this.config.earlySingleMinWidth + (this.config.minWidth - this.config.earlySingleMinWidth) * this.progression;
-    const maxWidth = this.config.earlySingleMaxWidth + (this.config.maxWidth - this.config.earlySingleMaxWidth) * this.progression;
+    const scale = this.currentPlatformScale();
+    const minWidth = Math.max(this.config.minWidth, (this.config.earlySingleMinWidth + (this.config.minWidth - this.config.earlySingleMinWidth) * this.progression) * scale);
+    const maxWidth = Math.max(minWidth, (this.config.earlySingleMaxWidth + (this.config.maxWidth - this.config.earlySingleMaxWidth) * this.progression) * scale);
     return Math.floor(randomBetween(minWidth, maxWidth + 1));
   }
 

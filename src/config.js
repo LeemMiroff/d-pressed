@@ -48,6 +48,32 @@ export const CONFIG = Object.freeze({
     earlySingleMinWidth: 96,
     earlySingleMaxWidth: 102,
     singleEdgeMargin: 5,
+    patternWeights: {
+      SINGLE: 35,
+      WALL: 35,
+      DOUBLE: 30,
+    },
+    maxPatternRepeat: 2,
+    platformSize: {
+      startScale: 1,
+      minScale: 0.55,
+      shrinkPerPattern: 0.003,
+      shrinkDurationSeconds: 180,
+    },
+    content: {
+      SINGLE: { enemyChance: 0.3, crystalChance: 0.6, chestChance: 0.05 },
+      WALL: { enemyChance: 0.4, crystalChance: 0.5, chestChance: 0.1 },
+      DOUBLE: {
+        variants: [
+          { weight: 1, enemy: { guaranteed: true, side: 'random' }, oppositeSide: { chestChance: 0.3, crystalChanceIfNoChest: 0.6 } },
+        ],
+      },
+    },
+    hubPortal: {
+      enabled: true,
+      everyPatterns: 20,
+      platformWidthRatio: 0.4,
+    },
   },
   crystals: {
     enabled: true,

@@ -9,6 +9,24 @@ const CONTROLS = [
   { path: ['platforms', 'earlySingleMinWidth'], label: 'Начальный минимальный размер платформы', min: 8, max: 120, step: 1 },
   { path: ['platforms', 'earlySingleMaxWidth'], label: 'Начальный максимальный размер платформы', min: 8, max: 120, step: 1 },
   { path: ['platforms', 'platformProgressionDuration'], label: 'Время перехода к стандартному размеру', min: 10, max: 600, step: 1 },
+  { path: ['platforms', 'patternWeights', 'SINGLE'], label: 'Вес SINGLE', min: 0, max: 100, step: 1 },
+  { path: ['platforms', 'patternWeights', 'WALL'], label: 'Вес WALL', min: 0, max: 100, step: 1 },
+  { path: ['platforms', 'patternWeights', 'DOUBLE'], label: 'Вес DOUBLE', min: 0, max: 100, step: 1 },
+  { path: ['platforms', 'maxPatternRepeat'], label: 'Максимум одинаковых паттернов подряд', min: 1, max: 10, step: 1 },
+  { path: ['platforms', 'platformSize', 'startScale'], label: 'Начальный масштаб платформ', min: 0.1, max: 2, step: 0.01 },
+  { path: ['platforms', 'platformSize', 'minScale'], label: 'Минимальный масштаб платформ', min: 0.1, max: 2, step: 0.01 },
+  { path: ['platforms', 'platformSize', 'shrinkDurationSeconds'], label: 'Время уменьшения до минимума (секунды)', min: 1, max: 3600, step: 1 },
+  { path: ['platforms', 'platformSize', 'shrinkPerPattern'], label: 'Уменьшение за паттерн', min: 0, max: 0.1, step: 0.001 },
+  { path: ['platforms', 'content', 'SINGLE', 'enemyChance'], label: 'SINGLE: шанс врага', min: 0, max: 1, step: 0.01 },
+  { path: ['platforms', 'content', 'SINGLE', 'crystalChance'], label: 'SINGLE: шанс кристаллов', min: 0, max: 1, step: 0.01 },
+  { path: ['platforms', 'content', 'SINGLE', 'chestChance'], label: 'SINGLE: шанс сундука', min: 0, max: 1, step: 0.01 },
+  { path: ['platforms', 'content', 'WALL', 'enemyChance'], label: 'WALL: шанс врага', min: 0, max: 1, step: 0.01 },
+  { path: ['platforms', 'content', 'WALL', 'crystalChance'], label: 'WALL: шанс кристаллов', min: 0, max: 1, step: 0.01 },
+  { path: ['platforms', 'content', 'WALL', 'chestChance'], label: 'WALL: шанс сундука', min: 0, max: 1, step: 0.01 },
+  { path: ['platforms', 'content', 'DOUBLE', 'variants', 0, 'oppositeSide', 'chestChance'], label: 'DOUBLE: шанс сундука', min: 0, max: 1, step: 0.01 },
+  { path: ['platforms', 'content', 'DOUBLE', 'variants', 0, 'oppositeSide', 'crystalChanceIfNoChest'], label: 'DOUBLE: шанс кристаллов', min: 0, max: 1, step: 0.01 },
+  { path: ['platforms', 'hubPortal', 'everyPatterns'], label: 'Портал каждые паттерны', min: 1, max: 200, step: 1 },
+  { path: ['platforms', 'hubPortal', 'platformWidthRatio'], label: 'Ширина портальной платформы', min: 0.2, max: 0.49, step: 0.01 },
   { path: ['player', 'maxHorizontalSpeed'], label: 'Скорость игрока', min: 1, max: 200, step: 1 },
   { path: ['player', 'acceleration'], label: 'Ускорение игрока', min: 1, max: 2000, step: 1 },
   { path: ['player', 'braking'], label: 'Торможение игрока', min: 1, max: 2000, step: 1 },
@@ -18,16 +36,17 @@ const STORAGE_KEY = 'd-pressed-inspector-settings';
 const PRESETS_KEY = 'd-pressed-flow-presets';
 
 function read(config, path) {
-  return config[path[0]][path[1]];
+  return path.reduce((value, key) => value?.[key], config);
 }
 
 function write(config, path, value) {
-  config[path[0]][path[1]] = value;
+  const parent = path.slice(0, -1).reduce((value, key) => value[key], config);
+  parent[path[path.length - 1]] = value;
 }
 
 export async function loadSavedConfig(config) {
   try {
-    const response = await fetch('/settings.json', { cache: 'no-store' });
+    const response = await fetch('./settings.json', { cache: 'no-store' });
     const saved = response.ok ? await response.json() : {};
     for (const definition of CONTROLS) {
       const value = saved[definition.path.join('.')];
@@ -37,6 +56,7 @@ export async function loadSavedConfig(config) {
     }
     if (typeof saved['player.showHitbox'] === 'boolean') config.player.showHitbox = saved['player.showHitbox'];
     if (typeof saved['platforms.enablePairedPlatforms'] === 'boolean') config.platforms.enablePairedPlatforms = saved['platforms.enablePairedPlatforms'];
+    if (typeof saved['platforms.hubPortal.enabled'] === 'boolean') config.platforms.hubPortal.enabled = saved['platforms.hubPortal.enabled'];
   } catch {
     try {
       const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
@@ -46,6 +66,7 @@ export async function loadSavedConfig(config) {
       }
       if (typeof saved['player.showHitbox'] === 'boolean') config.player.showHitbox = saved['player.showHitbox'];
       if (typeof saved['platforms.enablePairedPlatforms'] === 'boolean') config.platforms.enablePairedPlatforms = saved['platforms.enablePairedPlatforms'];
+      if (typeof saved['platforms.hubPortal.enabled'] === 'boolean') config.platforms.hubPortal.enabled = saved['platforms.hubPortal.enabled'];
     } catch {
       // Повреждённые или недоступные настройки не должны мешать запуску игры.
     }
@@ -61,19 +82,25 @@ export class Inspector {
     this.root = document.createElement('aside');
     this.root.className = 'inspector';
     this.root.hidden = true;
-    this.root.innerHTML = '<div class="inspector__header"><strong>Инспектор</strong><button type="button" data-close>×</button></div><p class="inspector__hint">Состояние потока настраивается в логических единицах мира.</p><details open><summary>Состояние потока</summary><label class="inspector__check"><input type="checkbox" data-paired>Использовать двойные платформы</label><label class="inspector__check"><input type="checkbox" data-hitbox>Показывать hitbox</label><div class="inspector__controls"></div></details><details open><summary>Пресеты</summary><div class="inspector__preset"><input type="text" data-preset-name placeholder="Название пресета"><button type="button" data-preset-save>Сохранить</button></div><div class="inspector__preset"><select data-preset-list></select><button type="button" data-preset-load>Применить</button><button type="button" data-preset-delete>Удалить</button></div></details><div class="inspector__actions"><button type="button" data-save>Сохранить настройки</button><span data-status></span></div><dl class="inspector__telemetry"></dl>';
+    this.root.innerHTML = '<div class="inspector__header"><strong>Инспектор</strong><button type="button" data-close>×</button></div><p class="inspector__hint">Состояние потока настраивается в логических единицах мира.</p><details open><summary>Состояние потока</summary><label class="inspector__check"><input type="checkbox" data-paired>Использовать двойные платформы</label><label class="inspector__check"><input type="checkbox" data-hub-portal>Использовать порталы в хаб</label><label class="inspector__check"><input type="checkbox" data-hitbox>Показывать hitbox</label><div class="inspector__controls"></div></details><details open><summary>Пресеты</summary><div class="inspector__preset"><input type="text" data-preset-name placeholder="Название пресета"><button type="button" data-preset-save>Сохранить</button></div><div class="inspector__preset"><select data-preset-list></select><button type="button" data-preset-load>Применить</button><button type="button" data-preset-delete>Удалить</button></div></details><div class="inspector__actions"><button type="button" data-save>Сохранить настройки</button><span data-status></span></div><dl class="inspector__telemetry"></dl>';
     document.body.append(this.root);
     this.telemetry = this.root.querySelector('.inspector__telemetry');
 
     const controls = this.root.querySelector('.inspector__controls');
     const hitbox = this.root.querySelector('[data-hitbox]');
     const paired = this.root.querySelector('[data-paired]');
+    const hubPortal = this.root.querySelector('[data-hub-portal]');
     const presetName = this.root.querySelector('[data-preset-name]');
     const presetList = this.root.querySelector('[data-preset-list]');
     hitbox.checked = config.player.showHitbox;
     paired.checked = config.platforms.enablePairedPlatforms;
+    hubPortal.checked = config.platforms.hubPortal.enabled;
     paired.addEventListener('change', () => {
       config.platforms.enablePairedPlatforms = paired.checked;
+      game.restart(true);
+    });
+    hubPortal.addEventListener('change', () => {
+      config.platforms.hubPortal.enabled = hubPortal.checked;
       game.restart(true);
     });
     this.presets = this.readPresets();
@@ -114,7 +141,7 @@ export class Inspector {
         write(config, definition.path, value);
         source.value = value;
         target.value = value;
-        if (definition.path[0] === 'platforms' && ['minWidth', 'maxWidth', 'minGap', 'maxGap'].includes(definition.path[1])) {
+        if (definition.path[0] === 'platforms') {
           this.schedulePlatformRegeneration();
         }
       };
@@ -146,6 +173,7 @@ export class Inspector {
     const values = Object.fromEntries(this.rows.map(({ input, definition }) => [definition.path.join('.'), Number(input.value)]));
     values['player.showHitbox'] = this.root.querySelector('[data-hitbox]').checked;
     values['platforms.enablePairedPlatforms'] = this.root.querySelector('[data-paired]').checked;
+    values['platforms.hubPortal.enabled'] = this.root.querySelector('[data-hub-portal]').checked;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(values));
     const status = this.root.querySelector('[data-status]');
     try {
@@ -165,6 +193,7 @@ export class Inspector {
     return {
       ...Object.fromEntries(this.rows.map(({ input, definition }) => [definition.path.join('.'), Number(input.value)])),
       'platforms.enablePairedPlatforms': this.root.querySelector('[data-paired]').checked,
+      'platforms.hubPortal.enabled': this.root.querySelector('[data-hub-portal]').checked,
     };
   }
 
@@ -183,6 +212,10 @@ export class Inspector {
     if (typeof values['platforms.enablePairedPlatforms'] === 'boolean') {
       this.config.platforms.enablePairedPlatforms = values['platforms.enablePairedPlatforms'];
       this.root.querySelector('[data-paired]').checked = this.config.platforms.enablePairedPlatforms;
+    }
+    if (typeof values['platforms.hubPortal.enabled'] === 'boolean') {
+      this.config.platforms.hubPortal.enabled = values['platforms.hubPortal.enabled'];
+      this.root.querySelector('[data-hub-portal]').checked = this.config.platforms.hubPortal.enabled;
     }
     this.game.restart(true);
   }

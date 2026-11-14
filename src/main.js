@@ -30,12 +30,12 @@ async function start() {
 
   await loadSavedConfig(CONFIG);
   const [playerTexture, platformTexture, backgroundTexture, crystalTexture, chestTexture, enemyTexture] = await Promise.all([
-    Assets.load('/ASEPRITE/gg.png'),
-    Assets.load('/ASEPRITE/platforem.png'),
-    Assets.load('/game-background.png'),
-    Assets.load('/ASEPRITE/coin/1.png'),
-    Assets.load('/ASEPRITE/sunduk/sunduk.png'),
-    Assets.load('/ASEPRITE/vrag/vrag.png'),
+    Assets.load('./ASEPRITE/gg.png'),
+    Assets.load('./ASEPRITE/platforem.png'),
+    Assets.load('./game-background.png'),
+    Assets.load('./ASEPRITE/coin/1.png'),
+    Assets.load('./ASEPRITE/sunduk/sunduk.png'),
+    Assets.load('./ASEPRITE/vrag/vrag.png'),
   ]);
   playerTexture.source.scaleMode = 'nearest';
   platformTexture.source.scaleMode = 'nearest';

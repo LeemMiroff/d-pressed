@@ -127,6 +127,11 @@ export class ChestManager {
     }
   }
 
+  clearPlatform(platform) {
+    const chest = this.chests.find((candidate) => candidate.platform === platform);
+    chest?.reset();
+  }
+
   update(deltaSeconds) {
     for (const chest of this.chests) {
       if (chest.platform.recycledThisFrame) this.spawnForPlatform(chest);
@@ -138,7 +143,7 @@ export class ChestManager {
   spawnForPlatform(chest) {
     chest.reset();
     const isStartPlatform = chest.platform === this.game.player.groundedOn;
-    if (chest.platform.active && (chest.platform.hubEntryOnly || isStartPlatform || Math.random() < this.config.spawnChance)) {
+    if (chest.platform.active && !chest.platform.hubEntryOnly && (chest.platform.spawnContent?.chest || (isStartPlatform && chest.platform.spawnContent?.chest !== false))) {
       chest.spawn();
     }
   }
