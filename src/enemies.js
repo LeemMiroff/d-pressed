@@ -84,7 +84,7 @@ class Enemy {
       return;
     }
     if (this.hitFlight) {
-      this.setFrame(3);
+      this.setFrame(4);
       this.hitFlight.elapsed += deltaSeconds;
       const progress = Math.min(1, this.hitFlight.elapsed / HIT_FLIGHT_DURATION);
       const arc = 4 * HIT_JUMP_HEIGHT * progress * (1 - progress);
@@ -166,8 +166,8 @@ export class EnemyManager {
     this.game = game;
     this.enemies = [];
     this.previousPlayerCenterX = 0;
-    const frameCount = 4;
-    const frameGap = 1;
+    const frameCount = 5;
+    const frameGap = 0;
     const frameWidth = Math.floor(
       (game.textures.enemyTexture.width - frameGap * (frameCount - 1)) / frameCount,
     );

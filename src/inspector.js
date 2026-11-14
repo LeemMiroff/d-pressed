@@ -63,6 +63,7 @@ export class Inspector {
     this.root.hidden = true;
     this.root.innerHTML = '<div class="inspector__header"><strong>Инспектор</strong><button type="button" data-close>×</button></div><p class="inspector__hint">Состояние потока настраивается в логических единицах мира.</p><details open><summary>Состояние потока</summary><label class="inspector__check"><input type="checkbox" data-paired>Использовать двойные платформы</label><label class="inspector__check"><input type="checkbox" data-hitbox>Показывать hitbox</label><div class="inspector__controls"></div></details><details open><summary>Пресеты</summary><div class="inspector__preset"><input type="text" data-preset-name placeholder="Название пресета"><button type="button" data-preset-save>Сохранить</button></div><div class="inspector__preset"><select data-preset-list></select><button type="button" data-preset-load>Применить</button><button type="button" data-preset-delete>Удалить</button></div></details><div class="inspector__actions"><button type="button" data-save>Сохранить настройки</button><span data-status></span></div><dl class="inspector__telemetry"></dl>';
     document.body.append(this.root);
+    this.telemetry = this.root.querySelector('.inspector__telemetry');
 
     const controls = this.root.querySelector('.inspector__controls');
     const hitbox = this.root.querySelector('[data-hitbox]');
@@ -211,9 +212,10 @@ export class Inspector {
   }
 
   update() {
+    if (this.root.hidden) return;
     const player = this.game.player;
     const maxReach = this.config.player.maxHorizontalSpeed * Math.sqrt((2 * this.config.platforms.maxGap) / this.config.player.gravity) + 8;
-    this.root.querySelector('.inspector__telemetry').innerHTML = `
+    this.telemetry.innerHTML = `
       <dt>Скорость мира</dt><dd>${this.game.worldSpeed.toFixed(2)}</dd>
       <dt>Дальность при макс. зазоре</dt><dd>${maxReach.toFixed(1)}</dd>
       <dt>Игрок X / Y</dt><dd>${player.x.toFixed(1)} / ${player.y.toFixed(1)}</dd>

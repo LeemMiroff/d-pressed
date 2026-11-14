@@ -228,6 +228,7 @@ export class PlatformPool {
     for (const platform of this.items) {
       platform.hubEntryOnly = false;
       platform.routeStaged = false;
+      platform.portalPlatform = false;
       platform.node.visible = true;
     }
 

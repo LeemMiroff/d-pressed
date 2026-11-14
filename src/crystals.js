@@ -184,6 +184,7 @@ class BurstCoin {
     this.elapsed = 0;
     this.frameIndex = 0;
     this.frameElapsed = 0;
+    this.counted = false;
   }
 
   update(deltaSeconds) {
@@ -223,6 +224,8 @@ class BurstCoin {
     );
     if (progress < 1) return false;
 
+    if (this.counted) return false;
+    this.counted = true;
     this.node.removeFromParent();
     return true;
   }
@@ -327,7 +330,10 @@ export class CrystalManager {
       this.updateFlight(group.right, deltaSeconds);
     }
     for (let index = this.burstCoins.length - 1; index >= 0; index -= 1) {
-      if (this.burstCoins[index].update(deltaSeconds)) this.burstCoins.splice(index, 1);
+      if (this.burstCoins[index].update(deltaSeconds)) {
+        this.awardCrystal();
+        this.burstCoins.splice(index, 1);
+      }
     }
   }
 
@@ -353,9 +359,13 @@ export class CrystalManager {
 
   updateFlight(crystal, deltaSeconds) {
     if (crystal.updateFlight(deltaSeconds)) {
-      this.count += 1;
-      this.updateCounter();
+      this.awardCrystal();
     }
+  }
+
+  awardCrystal() {
+    this.count += 1;
+    this.updateCounter();
   }
 
   updateCounter() {

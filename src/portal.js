@@ -44,7 +44,7 @@ class PortalEntity {
 export class PortalManager {
   constructor(game) {
     this.game = game;
-    this.nextPortalTime = 30;
+    this.nextPortalTime = 60;
     this.portalPair = null;
     this.hubX = 0;
     this.hubWidth = game.config.world.width * 0.8;
@@ -80,7 +80,7 @@ export class PortalManager {
     this.transitionPhase = null;
     this.transitionNode.visible = false;
     for (const platform of this.game.platformPool.items) platform.node.visible = true;
-    this.nextPortalTime = Math.max(30, this.game.difficultyTime + 30);
+    this.nextPortalTime = Math.max(60, this.game.difficultyTime + 60);
   }
 
   resizeWorld(height) {
@@ -107,11 +107,9 @@ export class PortalManager {
     this.updateMovingHub(deltaSeconds);
 
     if (!this.portalPair && this.game.difficultyTime >= this.nextPortalTime) {
-      if (this.spawnPortalPair()) this.nextPortalTime += 30;
+      if (this.spawnPortalPair()) this.nextPortalTime += 60;
     }
     if (!this.portalPair) return;
-    for (const portal of this.portalPair) portal.syncPosition();
-
     const player = this.game.player;
     const playerBounds = {
       x: player.x,
@@ -121,6 +119,13 @@ export class PortalManager {
     };
     if (this.portalPair.some((portal) => overlaps(playerBounds, portal.getBounds()))) {
       this.startTransitionToHub();
+    }
+  }
+
+  prepareForPlatformRecycle() {
+    if (!this.portalPair) return;
+    if (this.portalPair.every((portal) => portal.platform.y + portal.platform.height < 0)) {
+      this.clearPortalPair();
     }
   }
 
@@ -138,7 +143,9 @@ export class PortalManager {
 
   clearPortalPair() {
     if (!this.portalPair) return;
+    const platforms = this.portalPair.map((portal) => portal.platform);
     for (const portal of this.portalPair) portal.destroy();
+    for (const platform of platforms) platform.portalPlatform = false;
     this.portalPair = null;
   }
 

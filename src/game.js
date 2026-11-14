@@ -1,4 +1,4 @@
-import { Graphics, Sprite } from 'pixi.js';
+import { Container, Graphics, Sprite, Text } from 'pixi.js';
 import { findLandingPlatform, isOnPlatform } from './collision.js';
 import { PlatformPool } from './platform-pool.js';
 import { EnemyManager } from './enemies.js';
@@ -20,6 +20,9 @@ export class Game {
     this.uiRoot = uiRoot;
     this.textures = textures;
     this.mode = 'game';
+    this.gameOver = false;
+    this.simulationAccumulator = 0;
+    this.simulationStep = 1 / 60;
     this.input = input;
     this.config = config;
     this.worldSpeed = config.platforms.initialWorldSpeed;
@@ -34,6 +37,8 @@ export class Game {
       vy: 0,
       groundedOn: null,
     };
+    this.previousPlayerX = 0;
+    this.previousPlayerY = 0;
     this.facing = 1;
 
     this.platformPool = new PlatformPool(
@@ -56,6 +61,16 @@ export class Game {
     this.hitboxShape.visible = config.player.showHitbox;
     worldRoot.addChild(this.hitboxShape);
 
+    this.gameOverOverlay = new Container({ label: 'game-over' });
+    this.gameOverOverlay.visible = false;
+    this.gameOverOverlayShape = new Graphics().rect(0, 0, config.world.width, config.world.height).fill(0x000000);
+    const restartText = new Text({ text: 'PRESS R', style: { fill: 0xffffff, fontFamily: 'monospace', fontSize: 8 } });
+    restartText.anchor.set(0.5);
+    restartText.position.set(config.world.width * 0.5, config.world.height * 0.5);
+    this.gameOverOverlay.addChild(this.gameOverOverlayShape, restartText);
+    this.gameOverRestartText = restartText;
+    uiRoot.addChild(this.gameOverOverlay);
+
     this.restart();
     this.enemyManager = new EnemyManager(this);
     this.enemyManager.reset();
@@ -66,13 +81,15 @@ export class Game {
     this.portalManager = new PortalManager(this);
   }
 
-  restart(regeneratePlatforms = false, preserveProgression = false) {
+  restart(preserveProgression = false) {
     const preservedWorldSpeed = this.worldSpeed;
     this.input.release();
+    this.simulationAccumulator = 0;
+    this.gameOver = false;
+    this.gameOverOverlay.visible = false;
     if (!preserveProgression) {
       this.difficultyTime = 0;
       this.doublePlatformsDisabled = false;
-      this.config.platforms.enablePairedPlatforms = true;
     }
     this.platformPool.setProgression(this.difficultyTime);
     this.platformPool.initialize();
@@ -80,13 +97,14 @@ export class Game {
     this.player.vx = 0;
     this.player.vy = 0;
     this.facing = 1;
-
     const startPlatform = this.platformPool.items[
       Math.min(this.config.player.startPlatformIndex, this.platformPool.items.length - 1)
     ];
     this.player.groundedOn = startPlatform;
     this.player.x = startPlatform.x + (startPlatform.width - this.player.width) / 2;
     this.player.y = startPlatform.y - this.player.height;
+    this.previousPlayerX = this.player.x;
+    this.previousPlayerY = this.player.y;
     this.renderPlayer();
     this.enemyManager?.reset();
     this.crystalManager?.reset();
@@ -99,12 +117,30 @@ export class Game {
     this.config.world.height = height;
     this.config.platforms.startY = height - 24;
     this.platformPool.initialStates.length = 0;
-    this.platformPool.initialize();
+    this.gameOverOverlayShape.clear().rect(0, 0, this.config.world.width, height).fill(0x000000);
+    this.gameOverRestartText.position.set(this.config.world.width * 0.5, height * 0.5);
     this.restart();
   }
 
   update(deltaSeconds) {
-    const dt = Math.min(deltaSeconds, 0.05);
+    this.simulationAccumulator += Math.min(deltaSeconds, 0.25);
+    let steps = 0;
+    while (this.simulationAccumulator >= this.simulationStep && steps < 16) {
+      this.previousPlayerX = this.player.x;
+      this.previousPlayerY = this.player.y;
+      this.updateStep(this.simulationStep);
+      this.simulationAccumulator -= this.simulationStep;
+      steps += 1;
+    }
+    const alpha = this.simulationAccumulator / this.simulationStep;
+    this.renderPlayer(alpha);
+  }
+
+  updateStep(dt) {
+
+    if (this.gameOver) {
+      return;
+    }
 
     if (this.mode === 'transition') {
       this.portalManager.update(dt);
@@ -112,7 +148,6 @@ export class Game {
       this.chestManager?.update(dt);
       this.crystalManager?.update(dt);
       this.platformPool.clearRecycleFlags();
-      this.renderPlayer();
       return;
     }
 
@@ -152,6 +187,7 @@ export class Game {
     }
 
     this.platformPool.updateMovement(dt, this.worldSpeed);
+    this.portalManager?.prepareForPlatformRecycle();
     this.platformPool.recycleOffscreen();
 
     if (this.player.groundedOn?.recycledThisFrame) {
@@ -160,7 +196,12 @@ export class Game {
 
     this.updateHorizontalMovement(dt);
     this.updateVerticalMovement(dt);
-    this.renderPlayer();
+    if (this.player.y + this.player.height < 0 || this.player.y > this.config.world.height) {
+      this.gameOver = true;
+      this.gameOverOverlay.visible = true;
+      this.input.release();
+      return;
+    }
     this.enemyManager?.update(dt);
     this.chestManager?.update(dt);
     this.crystalManager?.update(dt);
@@ -184,6 +225,10 @@ export class Game {
 
   updateVerticalMovement(deltaSeconds) {
     const groundedPlatform = this.player.groundedOn;
+
+    if (groundedPlatform && !groundedPlatform.active) {
+      this.player.groundedOn = null;
+    }
 
     if (groundedPlatform?.active) {
       this.player.y = groundedPlatform.y - this.player.height;
@@ -219,13 +264,15 @@ export class Game {
     this.player.y = nextY;
   }
 
-  renderPlayer() {
+  renderPlayer(alpha = 1) {
+    const renderX = this.previousPlayerX + (this.player.x - this.previousPlayerX) * alpha;
+    const renderY = this.previousPlayerY + (this.player.y - this.previousPlayerY) * alpha;
     this.playerShape.scale.x = this.facing;
     this.playerShape.position.set(
-      this.player.x + this.config.player.visualOffsetX + (this.facing < 0 ? this.config.player.visualWidth : 0),
-      this.player.y + this.config.player.visualOffsetY,
+      renderX + this.config.player.visualOffsetX + (this.facing < 0 ? this.config.player.visualWidth : 0),
+      renderY + this.config.player.visualOffsetY,
     );
-    this.hitboxShape.position.set(this.player.x, this.player.y);
+    this.hitboxShape.position.set(renderX, renderY);
   }
 
   setHitboxVisible(visible) {

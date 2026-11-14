@@ -73,12 +73,11 @@ async function start() {
     );
     uiRoot.scale.set(scale);
     uiRoot.position.copyFrom(viewport.position);
-    game?.resizeWorld(worldHeight);
     game?.portalManager?.resizeWorld(worldHeight);
+    game?.resizeWorld(worldHeight);
   };
 
   resizeViewport();
-  game.portalManager?.startInitialHub();
   window.addEventListener('resize', resizeViewport);
   window.addEventListener('keydown', (event) => {
     if (event.code === 'KeyR' && !event.repeat) {
