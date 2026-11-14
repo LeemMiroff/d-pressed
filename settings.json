@@ -1,12 +1,15 @@
 {
   "platforms.initialWorldSpeed": 25,
   "platforms.worldSpeedIncrease": 0.15,
-  "platforms.maxWorldSpeed": 100,
+  "platforms.maxWorldSpeed": 120,
   "platforms.minGap": 32,
   "platforms.maxGap": 42,
-  "player.maxHorizontalSpeed": 60,
+  "platforms.minWidth": 30,
+  "platforms.maxWidth": 50,
+  "player.maxHorizontalSpeed": 45,
   "player.acceleration": 1800,
   "player.braking": 1800,
   "player.gravity": 480,
-  "player.showHitbox": false
+  "player.showHitbox": false,
+  "platforms.enablePairedPlatforms": true
 }

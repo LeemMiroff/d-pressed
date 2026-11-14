@@ -29,19 +29,25 @@ async function start() {
   app.stage.addChild(viewport, uiRoot);
 
   await loadSavedConfig(CONFIG);
-  const [playerTexture, platformTexture, backgroundTexture] = await Promise.all([
+  const [playerTexture, platformTexture, backgroundTexture, crystalTexture, chestTexture, enemyTexture] = await Promise.all([
     Assets.load('/ASEPRITE/gg.png'),
     Assets.load('/ASEPRITE/platforem.png'),
     Assets.load('/game-background.png'),
+    Assets.load('/ASEPRITE/coin/1.png'),
+    Assets.load('/ASEPRITE/sunduk/sunduk.png'),
+    Assets.load('/ASEPRITE/vrag/vrag.png'),
   ]);
   playerTexture.source.scaleMode = 'nearest';
   platformTexture.source.scaleMode = 'nearest';
   backgroundTexture.source.scaleMode = 'nearest';
+  crystalTexture.source.scaleMode = 'nearest';
+  chestTexture.source.scaleMode = 'nearest';
+  enemyTexture.source.scaleMode = 'nearest';
   viewportBackground.texture = backgroundTexture;
   viewportBackground.width = CONFIG.world.width;
   viewportBackground.height = CONFIG.world.height;
   const input = new PointerInput(app.canvas);
-  const game = new Game(worldRoot, input, CONFIG, { playerTexture, platformTexture });
+  const game = new Game(worldRoot, uiRoot, input, CONFIG, { playerTexture, platformTexture, crystalTexture, chestTexture, enemyTexture });
   const inspector = new Inspector(CONFIG, game);
 
   const resizeViewport = () => {
@@ -65,10 +71,14 @@ async function start() {
       Math.round((app.screen.width - viewportWidth) / 2),
       Math.round((app.screen.height - viewportHeight) / 2),
     );
+    uiRoot.scale.set(scale);
+    uiRoot.position.copyFrom(viewport.position);
     game?.resizeWorld(worldHeight);
+    game?.portalManager?.resizeWorld(worldHeight);
   };
 
   resizeViewport();
+  game.portalManager?.startInitialHub();
   window.addEventListener('resize', resizeViewport);
   window.addEventListener('keydown', (event) => {
     if (event.code === 'KeyR' && !event.repeat) {

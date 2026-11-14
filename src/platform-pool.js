@@ -4,7 +4,7 @@ function randomBetween(min, max) {
   return min + Math.random() * (max - min);
 }
 
-class PlatformEntity {
+export class PlatformEntity {
   constructor(config, texture, worldWidth) {
     this.config = config;
     this.worldWidth = worldWidth;
@@ -35,16 +35,26 @@ class PlatformEntity {
     this.y = 0;
     this.width = 0;
     this.height = config.height;
+    this.beforeRecycle = null;
+    this.allowWallContact = false;
+    this.hubEntryOnly = false;
   }
 
-  configure(x, y, width) {
+  configure(x, y, width, allowWallContact = false) {
     let spawnX = Math.round(x);
     const spawnY = Math.round(y);
     const maximumX = this.worldWidth - width;
-    if (spawnX > 0 && spawnX < this.config.wallMargin) {
-      spawnX = 0;
-    } else if (spawnX < maximumX && spawnX > maximumX - this.config.wallMargin) {
-      spawnX = maximumX;
+    spawnX = Math.max(0, Math.min(maximumX, spawnX));
+    this.allowWallContact = allowWallContact;
+    if (!allowWallContact) {
+      const edgeClearance = this.config.edgeClearance;
+      if (spawnX > 0 && spawnX < edgeClearance) {
+        spawnX = 0;
+      } else if (spawnX < maximumX && spawnX > maximumX - edgeClearance) {
+        spawnX = maximumX;
+      } else {
+        spawnX = Math.max(edgeClearance, Math.min(maximumX - edgeClearance, spawnX));
+      }
     }
     this.active = true;
     this.recycledThisFrame = false;
@@ -107,6 +117,8 @@ export class PlatformPool {
     this.showHitboxes = false;
     this.initialStates = [];
     this.groups = [];
+    this.progression = 0;
+    this.pairProgression = 0;
 
     for (let index = 0; index < config.poolSize; index += 1) {
       const platform = new PlatformEntity(config, texture, worldConfig.width);
@@ -125,11 +137,16 @@ export class PlatformPool {
     let previousPlatform = null;
     let y = this.config.startY;
     this.initialStates.length = 0;
+    this.groups = [];
 
     for (let index = 0; index < this.items.length; index += 1) {
+      const startPlatformIndex = this.playerConfig.startPlatformIndex;
+      const wouldPairStartPlatform = index === startPlatformIndex || index + 1 === startPlatformIndex;
       const canPair = index < this.items.length - 1
         && index % 2 === 0
-        && Math.random() < this.config.pairedPlatformChance;
+        && !wouldPairStartPlatform
+        && this.config.enablePairedPlatforms
+        && Math.random() < this.config.pairedPlatformChance * (1 - this.pairProgression);
       if (canPair) {
         if (previousPlatform) {
           y -= randomBetween(this.config.minGap, this.config.maxGap);
@@ -143,31 +160,32 @@ export class PlatformPool {
         const scaledRightWidth = Math.floor(rightWidth * widthScale);
         const leftPlatform = this.items[index];
         const rightPlatform = this.items[index + 1];
-        leftPlatform.configure(0, y, scaledLeftWidth);
-        rightPlatform.configure(this.worldConfig.width - scaledRightWidth, y, scaledRightWidth);
+        leftPlatform.configure(0, y, scaledLeftWidth, true);
+        rightPlatform.configure(this.worldConfig.width - scaledRightWidth, y, scaledRightWidth, true);
         this.initialStates.push(
           { x: leftPlatform.x, y: leftPlatform.y, width: leftPlatform.width },
           { x: rightPlatform.x, y: rightPlatform.y, width: rightPlatform.width },
         );
+        this.groups.push([leftPlatform, rightPlatform]);
         previousPlatform = rightPlatform;
         index += 1;
         continue;
       }
       const platform = this.items[index];
-      const isEarly = index < this.config.earlyPlatformCount;
+      const isEarly = this.progression < 1;
       const useSmall = isEarly && Math.random() < this.config.earlySmallChance;
-      const width = isEarly && !useSmall ? this.randomEarlyWidth() : this.randomWidth();
+      const width = isEarly && !useSmall ? this.randomProgressiveWidth() : this.randomWidth();
 
       if (previousPlatform) {
         const gap = randomBetween(this.config.minGap, this.config.maxGap);
         y -= gap;
         const x = isEarly && !useSmall
-          ? (index % 2 === 0 ? 0 : this.worldConfig.width - width)
+          ? this.randomPlatformX(width)
           : this.reachableX(previousPlatform, width, gap);
-        platform.configure(x, y, width);
+        platform.configure(x, y, width, true);
       } else {
-        const x = Math.floor(randomBetween(0, this.worldConfig.width - width));
-        platform.configure(x, y, width);
+        const x = this.randomPlatformX(width);
+        platform.configure(x, y, width, true);
       }
 
       previousPlatform = platform;
@@ -176,55 +194,87 @@ export class PlatformPool {
         y: platform.y,
         width: platform.width,
       });
+      this.groups.push([platform]);
     }
-    this.rebuildGroups();
-    this.normalizeGroupSpacing();
+    this.assignGroupSlots();
   }
 
-  rebuildGroups() {
-    const groupsByY = new Map();
-    for (const platform of this.items) {
-      const key = platform.y;
-      if (!groupsByY.has(key)) groupsByY.set(key, []);
-      groupsByY.get(key).push(platform);
-    }
-    this.groups = [...groupsByY.values()];
-    for (const group of this.groups) {
-      if (group.length < 2) continue;
-      group.sort((first, second) => first.x - second.x);
-      group[0].moveTo(0, group[0].y);
-      group[1].moveTo(this.worldConfig.width - group[1].width, group[1].y);
-      const firstState = this.initialStates[this.items.indexOf(group[0])];
-      const secondState = this.initialStates[this.items.indexOf(group[1])];
-      if (firstState) firstState.x = group[0].x;
-      if (secondState) secondState.x = group[1].x;
-    }
-  }
-
-  normalizeGroupSpacing() {
-    const sortedGroups = [...this.groups].sort((first, second) => second[0].y - first[0].y);
-    if (sortedGroups.length === 0) return;
-    const anchorY = sortedGroups[0][0].y;
+  assignGroupSlots() {
     const slotHeight = this.config.height + this.config.minGap;
-    for (let index = 0; index < sortedGroups.length; index += 1) {
-      const targetY = anchorY - index * slotHeight;
-      for (const platform of sortedGroups[index]) {
-        platform.moveTo(platform.x, targetY);
+    const startPlatform = this.items[this.playerConfig.startPlatformIndex];
+    const startGroupIndex = this.groups.findIndex((group) => group.includes(startPlatform));
+    for (let index = 0; index < this.groups.length; index += 1) {
+      let y;
+      if (index === startGroupIndex) {
+        y = this.config.startY - slotHeight;
+      } else if (index < startGroupIndex) {
+        y = this.config.startY + (startGroupIndex - index - 1) * slotHeight;
+      } else {
+        y = this.config.startY + (index - startGroupIndex) * slotHeight;
+      }
+      for (const platform of this.groups[index]) {
+        platform.moveTo(platform.x, y);
         const state = this.initialStates[this.items.indexOf(platform)];
-        if (state) state.y = targetY;
+        if (state) state.y = y;
       }
     }
+  }
+
+  prepareRouteBelow(anchorY) {
+    const activeGroups = this.groups.filter((group) => group.every((platform) => platform.active));
+    const entryGroup = activeGroups.find((group) => group.length === 1) || activeGroups[0];
+    if (!entryGroup) return null;
+
+    for (const platform of this.items) {
+      platform.hubEntryOnly = false;
+      platform.routeStaged = false;
+      platform.node.visible = true;
+    }
+
+    // The hub is followed by exactly one short platform at the right wall.
+    let y = anchorY + this.config.height + randomBetween(this.config.minGap, this.config.maxGap);
+    const entry = entryGroup[0];
+    const entryWidth = Math.floor(this.worldConfig.width * 0.4);
+    entry.configure(this.worldConfig.width - entryWidth, y, entryWidth, true);
+    entry.recycledThisFrame = true;
+    entry.hubEntryOnly = true;
+    entry.routeStaged = true;
+    for (const platform of entryGroup) platform.node.visible = true;
+
+    // Rebuild the rest using the normal gap range and fully random placement.
+    for (const group of activeGroups) {
+      if (group === entryGroup) continue;
+      y += this.config.height + randomBetween(this.config.minGap, this.config.maxGap);
+      if (group.length > 1) {
+        const leftWidth = this.randomWidth();
+        const rightWidth = this.randomWidth();
+        const scale = Math.min(1, (this.worldConfig.width - 16) / (leftWidth + rightWidth));
+        const scaledLeft = Math.floor(leftWidth * scale);
+        const scaledRight = Math.floor(rightWidth * scale);
+        group[0].configure(0, y, scaledLeft, true);
+        group[1].configure(this.worldConfig.width - scaledRight, y, scaledRight, true);
+      } else {
+        const platform = group[0];
+        const width = this.progression < 1 ? this.randomProgressiveWidth() : this.randomWidth();
+        const x = this.randomPlatformX(width);
+        platform.configure(x, y, width, true);
+      }
+      for (const platform of group) {
+        platform.recycledThisFrame = true;
+        platform.node.visible = true;
+      }
+    }
+
+    return entry;
   }
 
   reset() {
     for (let index = 0; index < this.items.length; index += 1) {
       const platform = this.items[index];
       const initialState = this.initialStates[index];
-      platform.configure(initialState.x, initialState.y, initialState.width);
+      platform.configure(initialState.x, initialState.y, initialState.width, platform.allowWallContact);
       platform.recycledThisFrame = false;
     }
-    this.rebuildGroups();
-    this.normalizeGroupSpacing();
   }
 
   updateMovement(deltaSeconds, worldSpeed) {
@@ -240,43 +290,137 @@ export class PlatformPool {
     }
   }
 
+  clearRecycleFlags() {
+    for (const platform of this.items) platform.recycledThisFrame = false;
+  }
+
   recycleOffscreen() {
-    const activeGroups = this.groups.filter((group) => group.some((platform) => platform.active && platform.y + platform.height >= 0));
-    const lowestGroup = activeGroups.reduce((result, group) => {
+    const isOffscreen = (group) => group.every((platform) => platform.active && platform.y + platform.height < 0);
+    const findLowestPlatform = (excludedGroup) => this.groups.reduce((result, group) => {
+      if (group === excludedGroup || !group.every((platform) => platform.active)) return result;
       const lowest = group.reduce((candidate, platform) => (!candidate || platform.y > candidate.y ? platform : candidate), null);
       return !result || lowest.y > result.y ? lowest : result;
     }, null);
-    for (const group of this.groups) {
-      if (!group.every((platform) => platform.active && platform.y + platform.height < 0)) continue;
-      if (!lowestGroup) {
-        group.forEach((platform) => platform.deactivate());
+
+    while (true) {
+      const group = this.groups.find(isOffscreen);
+      if (!group) return;
+      const lowestPlatform = findLowestPlatform(group);
+      if (!lowestPlatform) {
+        group.forEach((platform) => {
+          platform.beforeRecycle?.();
+          platform.deactivate();
+        });
         continue;
       }
       const gap = randomBetween(this.config.minGap, this.config.maxGap);
-      const y = lowestGroup.y + this.config.height + gap;
+      const y = lowestPlatform.y + this.config.height + gap;
+      const groupIndex = this.groups.indexOf(group);
+      group.forEach((platform) => platform.beforeRecycle?.());
+      group.forEach((platform) => {
+        platform.hubEntryOnly = false;
+        platform.portalPlatform = false;
+      });
       if (group.length > 1) {
+        if (this.pairProgression >= 1 && !group.isPortalPair) {
+          const first = group[0];
+          const second = group[1];
+          const firstWidth = this.randomWidth();
+          const secondWidth = this.randomWidth();
+          first.configure(this.reachableX(lowestPlatform, firstWidth, gap), y, firstWidth, true);
+          const secondY = y + this.config.height + this.config.minGap;
+          second.configure(this.reachableX(first, secondWidth, this.config.minGap), secondY, secondWidth, true);
+          first.recycledThisFrame = true;
+          second.recycledThisFrame = true;
+          this.groups.splice(groupIndex, 1, [first], [second]);
+          continue;
+        }
         const leftWidth = Math.floor(randomBetween(28, 58));
         const rightWidth = Math.floor(randomBetween(28, 58));
         const scale = Math.min(1, (this.worldConfig.width - 16) / (leftWidth + rightWidth));
         const scaledLeftWidth = Math.floor(leftWidth * scale);
         const scaledRightWidth = Math.floor(rightWidth * scale);
-        group[0].configure(0, y, scaledLeftWidth);
-        group[1].configure(this.worldConfig.width - scaledRightWidth, y, scaledRightWidth);
+        group[0].configure(0, y, scaledLeftWidth, true);
+        group[1].configure(this.worldConfig.width - scaledRightWidth, y, scaledRightWidth, true);
       } else {
-        const width = Math.random() < 0.32 ? Math.floor(randomBetween(34, 52)) : this.randomWidth();
-        const x = this.reachableX(lowestGroup, width, gap);
-        group[0].configure(x, y, width);
+        const width = this.progression < 1 ? this.randomProgressiveWidth() : this.randomWidth();
+        const x = Math.random() < 0.5
+          ? this.randomPlatformX(width)
+          : this.reachableX(lowestPlatform, width, gap);
+        group[0].configure(x, y, width, true);
       }
       group.forEach((platform) => { platform.recycledThisFrame = true; });
     }
+  }
+
+  createPortalPair() {
+    const candidates = this.groups
+      .filter((group) => group.length === 1 && group[0].active)
+      .sort((first, second) => second[0].y - first[0].y);
+    if (candidates.length < 2) return null;
+
+    const firstGroup = candidates[0];
+    const secondGroup = candidates[1];
+    const first = firstGroup[0];
+    const second = secondGroup[0];
+    const candidateY = Math.max(first.y, second.y);
+    const previousY = this.groups.reduce((nearest, group) => {
+      if (group === firstGroup || group === secondGroup || !group.every((platform) => platform.active)) {
+        return nearest;
+      }
+      const groupY = Math.max(...group.map((platform) => platform.y));
+      return groupY < candidateY && groupY > nearest ? groupY : nearest;
+    }, -Infinity);
+    const baseY = Number.isFinite(previousY)
+      ? previousY + this.config.height + randomBetween(this.config.minGap, this.config.maxGap)
+      : candidateY;
+    first.beforeRecycle?.();
+    second.beforeRecycle?.();
+    first.portalPlatform = true;
+    second.portalPlatform = true;
+    const leftWidth = this.randomWidth();
+    const rightWidth = this.randomWidth();
+    first.configure(0, baseY, leftWidth, true);
+    second.configure(this.worldConfig.width - rightWidth, baseY, rightWidth, true);
+    first.recycledThisFrame = true;
+    second.recycledThisFrame = true;
+
+    const firstIndex = this.groups.indexOf(firstGroup);
+    const secondIndex = this.groups.indexOf(secondGroup);
+    const insertIndex = Math.min(firstIndex, secondIndex);
+    this.groups = this.groups.filter((group) => group !== firstGroup && group !== secondGroup);
+    const pair = [first, second];
+    pair.isPortalPair = true;
+    this.groups.splice(insertIndex, 0, pair);
+    return pair;
   }
 
   randomWidth() {
     return Math.floor(randomBetween(this.config.minWidth, this.config.maxWidth + 1));
   }
 
+  randomPlatformX(width) {
+    const maximumX = this.worldConfig.width - width;
+    const clearance = this.config.edgeClearance;
+    if (maximumX <= clearance * 2 || Math.random() < 0.35) {
+      return Math.random() < 0.5 ? 0 : maximumX;
+    }
+    return Math.floor(randomBetween(clearance, maximumX - clearance + 1));
+  }
+
   randomEarlyWidth() {
     return Math.floor(randomBetween(this.config.earlyWideMinWidth, this.config.earlyWideMaxWidth + 1));
+  }
+
+  setProgression(elapsedSeconds) {
+    this.progression = Math.min(1, elapsedSeconds / this.config.platformProgressionDuration);
+    this.pairProgression = Math.min(1, elapsedSeconds / this.config.pairedPlatformDuration);
+  }
+
+  randomProgressiveWidth() {
+    const minWidth = this.config.earlySingleMinWidth + (this.config.minWidth - this.config.earlySingleMinWidth) * this.progression;
+    const maxWidth = this.config.earlySingleMaxWidth + (this.config.maxWidth - this.config.earlySingleMaxWidth) * this.progression;
+    return Math.floor(randomBetween(minWidth, maxWidth + 1));
   }
 
   reachableX(previousPlatform, width, gap) {

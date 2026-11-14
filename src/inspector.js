@@ -1,15 +1,21 @@
 const CONTROLS = [
   { path: ['platforms', 'initialWorldSpeed'], label: 'Начальная скорость платформ', min: 0, max: 300, step: 0.1 },
-  { path: ['platforms', 'worldSpeedIncrease'], label: 'Ускорение мира', min: 0, max: 3, step: 0.01 },
+  { path: ['platforms', 'targetWorldSpeedTime'], label: 'Время до максимальной скорости', min: 10, max: 900, step: 1 },
   { path: ['platforms', 'maxWorldSpeed'], label: 'Максимальная скорость платформ', min: 1, max: 300, step: 0.5 },
   { path: ['platforms', 'minGap'], label: 'Минимальный зазор', min: 0, max: 100, step: 1 },
   { path: ['platforms', 'maxGap'], label: 'Максимальный зазор', min: 0, max: 120, step: 1 },
+  { path: ['platforms', 'minWidth'], label: 'Минимальный размер одиночной платформы', min: 8, max: 120, step: 1 },
+  { path: ['platforms', 'maxWidth'], label: 'Максимальный размер одиночной платформы', min: 8, max: 120, step: 1 },
+  { path: ['platforms', 'earlySingleMinWidth'], label: 'Начальный минимальный размер платформы', min: 8, max: 120, step: 1 },
+  { path: ['platforms', 'earlySingleMaxWidth'], label: 'Начальный максимальный размер платформы', min: 8, max: 120, step: 1 },
+  { path: ['platforms', 'platformProgressionDuration'], label: 'Время перехода к стандартному размеру', min: 10, max: 600, step: 1 },
   { path: ['player', 'maxHorizontalSpeed'], label: 'Скорость игрока', min: 1, max: 200, step: 1 },
   { path: ['player', 'acceleration'], label: 'Ускорение игрока', min: 1, max: 2000, step: 1 },
   { path: ['player', 'braking'], label: 'Торможение игрока', min: 1, max: 2000, step: 1 },
   { path: ['player', 'gravity'], label: 'Гравитация', min: 1, max: 2000, step: 1 },
 ];
 const STORAGE_KEY = 'd-pressed-inspector-settings';
+const PRESETS_KEY = 'd-pressed-flow-presets';
 
 function read(config, path) {
   return config[path[0]][path[1]];
@@ -30,6 +36,7 @@ export async function loadSavedConfig(config) {
       }
     }
     if (typeof saved['player.showHitbox'] === 'boolean') config.player.showHitbox = saved['player.showHitbox'];
+    if (typeof saved['platforms.enablePairedPlatforms'] === 'boolean') config.platforms.enablePairedPlatforms = saved['platforms.enablePairedPlatforms'];
   } catch {
     try {
       const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
@@ -38,6 +45,7 @@ export async function loadSavedConfig(config) {
         if (Number.isFinite(value)) write(config, definition.path, value);
       }
       if (typeof saved['player.showHitbox'] === 'boolean') config.player.showHitbox = saved['player.showHitbox'];
+      if (typeof saved['platforms.enablePairedPlatforms'] === 'boolean') config.platforms.enablePairedPlatforms = saved['platforms.enablePairedPlatforms'];
     } catch {
       // Повреждённые или недоступные настройки не должны мешать запуску игры.
     }
@@ -49,15 +57,45 @@ export class Inspector {
     this.config = config;
     this.game = game;
     this.rows = [];
+    this.restartTimer = null;
     this.root = document.createElement('aside');
     this.root.className = 'inspector';
     this.root.hidden = true;
-    this.root.innerHTML = '<div class="inspector__header"><strong>Инспектор</strong><button type="button" data-close>×</button></div><p class="inspector__hint">Значения указаны в логических единицах мира.</p><label class="inspector__check"><input type="checkbox" data-hitbox>Показывать hitbox</label><div class="inspector__controls"></div><div class="inspector__actions"><button type="button" data-save>Сохранить настройки</button><span data-status></span></div><dl class="inspector__telemetry"></dl>';
+    this.root.innerHTML = '<div class="inspector__header"><strong>Инспектор</strong><button type="button" data-close>×</button></div><p class="inspector__hint">Состояние потока настраивается в логических единицах мира.</p><details open><summary>Состояние потока</summary><label class="inspector__check"><input type="checkbox" data-paired>Использовать двойные платформы</label><label class="inspector__check"><input type="checkbox" data-hitbox>Показывать hitbox</label><div class="inspector__controls"></div></details><details open><summary>Пресеты</summary><div class="inspector__preset"><input type="text" data-preset-name placeholder="Название пресета"><button type="button" data-preset-save>Сохранить</button></div><div class="inspector__preset"><select data-preset-list></select><button type="button" data-preset-load>Применить</button><button type="button" data-preset-delete>Удалить</button></div></details><div class="inspector__actions"><button type="button" data-save>Сохранить настройки</button><span data-status></span></div><dl class="inspector__telemetry"></dl>';
     document.body.append(this.root);
 
     const controls = this.root.querySelector('.inspector__controls');
     const hitbox = this.root.querySelector('[data-hitbox]');
+    const paired = this.root.querySelector('[data-paired]');
+    const presetName = this.root.querySelector('[data-preset-name]');
+    const presetList = this.root.querySelector('[data-preset-list]');
     hitbox.checked = config.player.showHitbox;
+    paired.checked = config.platforms.enablePairedPlatforms;
+    paired.addEventListener('change', () => {
+      config.platforms.enablePairedPlatforms = paired.checked;
+      game.restart(true);
+    });
+    this.presets = this.readPresets();
+    this.renderPresetList();
+    this.root.querySelector('[data-preset-save]').addEventListener('click', () => {
+      const name = presetName.value.trim();
+      if (!name) return;
+      this.presets[name] = this.captureSettings();
+      this.writePresets();
+      this.renderPresetList();
+      presetList.value = name;
+      presetName.value = '';
+    });
+    this.root.querySelector('[data-preset-load]').addEventListener('click', () => {
+      const values = this.presets[presetList.value];
+      if (values) this.applySettings(values);
+    });
+    this.root.querySelector('[data-preset-delete]').addEventListener('click', () => {
+      if (!presetList.value) return;
+      delete this.presets[presetList.value];
+      this.writePresets();
+      this.renderPresetList();
+    });
     hitbox.addEventListener('change', () => game.setHitboxVisible(hitbox.checked));
     for (const definition of CONTROLS) {
       const row = document.createElement('label');
@@ -75,6 +113,9 @@ export class Inspector {
         write(config, definition.path, value);
         source.value = value;
         target.value = value;
+        if (definition.path[0] === 'platforms' && ['minWidth', 'maxWidth', 'minGap', 'maxGap'].includes(definition.path[1])) {
+          this.schedulePlatformRegeneration();
+        }
       };
       rangeInput.addEventListener('input', () => updateValue(rangeInput, numberInput));
       numberInput.addEventListener('input', () => updateValue(numberInput, rangeInput));
@@ -103,6 +144,7 @@ export class Inspector {
   async save() {
     const values = Object.fromEntries(this.rows.map(({ input, definition }) => [definition.path.join('.'), Number(input.value)]));
     values['player.showHitbox'] = this.root.querySelector('[data-hitbox]').checked;
+    values['platforms.enablePairedPlatforms'] = this.root.querySelector('[data-paired]').checked;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(values));
     const status = this.root.querySelector('[data-status]');
     try {
@@ -116,6 +158,56 @@ export class Inspector {
       status.textContent = 'Сохранено локально';
     }
     window.setTimeout(() => { status.textContent = ''; }, 2000);
+  }
+
+  captureSettings() {
+    return {
+      ...Object.fromEntries(this.rows.map(({ input, definition }) => [definition.path.join('.'), Number(input.value)])),
+      'platforms.enablePairedPlatforms': this.root.querySelector('[data-paired]').checked,
+    };
+  }
+
+  schedulePlatformRegeneration() {
+    window.clearTimeout(this.restartTimer);
+    this.restartTimer = window.setTimeout(() => this.game.restart(true), 180);
+  }
+
+  applySettings(values) {
+    for (const row of this.rows) {
+      const value = values[row.definition.path.join('.')];
+      if (!Number.isFinite(value)) continue;
+      write(this.config, row.definition.path, value);
+      row.input.value = value;
+    }
+    if (typeof values['platforms.enablePairedPlatforms'] === 'boolean') {
+      this.config.platforms.enablePairedPlatforms = values['platforms.enablePairedPlatforms'];
+      this.root.querySelector('[data-paired]').checked = this.config.platforms.enablePairedPlatforms;
+    }
+    this.game.restart(true);
+  }
+
+  readPresets() {
+    try {
+      const value = JSON.parse(localStorage.getItem(PRESETS_KEY) || '{}');
+      return value && typeof value === 'object' ? value : {};
+    } catch {
+      return {};
+    }
+  }
+
+  writePresets() {
+    localStorage.setItem(PRESETS_KEY, JSON.stringify(this.presets));
+  }
+
+  renderPresetList() {
+    const list = this.root.querySelector('[data-preset-list]');
+    list.innerHTML = '<option value="">Выберите пресет</option>';
+    for (const name of Object.keys(this.presets).sort()) {
+      const option = document.createElement('option');
+      option.value = name;
+      option.textContent = name;
+      list.append(option);
+    }
   }
 
   update() {

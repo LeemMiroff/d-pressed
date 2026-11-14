@@ -7,7 +7,7 @@ export function findLandingPlatform(player, previousBottom, nextBottom, platform
   let landingTop = Number.POSITIVE_INFINITY;
 
   for (const platform of platforms) {
-    if (!platform.active) {
+    if (!platform.active || !platform.node.visible) {
       continue;
     }
 
