@@ -70,7 +70,7 @@ export class Game {
     this.gameOverOverlay = new Container({ label: 'game-over' });
     this.gameOverOverlay.visible = false;
     this.gameOverOverlayShape = new Graphics().rect(0, 0, config.world.width, config.world.height).fill(0x000000);
-    const restartText = new Text({ text: 'PRESS R', style: { fill: 0xffffff, fontFamily: 'monospace', fontSize: 8 } });
+    const restartText = new Text({ text: 'PRESS R / TAP', style: { fill: 0xffffff, fontFamily: 'monospace', fontSize: 8 } });
     restartText.anchor.set(0.5);
     restartText.position.set(config.world.width * 0.5, config.world.height * 0.5);
     this.gameOverOverlay.addChild(this.gameOverOverlayShape, restartText);

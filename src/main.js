@@ -51,6 +51,11 @@ async function start() {
   const input = new PointerInput(app.canvas);
   const game = new Game(worldRoot, uiRoot, input, CONFIG, { playerTexture, platformTexture, crystalTexture, chestTexture, enemyTexture, scarecrowTexture });
   const inspector = new Inspector(CONFIG, game);
+  app.canvas.addEventListener('pointerdown', (event) => {
+    if (!game.gameOver) return;
+    event.preventDefault();
+    game.restart();
+  }, { passive: false });
   window.addEventListener('pointerdown', () => game.audio.unlock(), { passive: true });
   window.addEventListener('keydown', () => game.audio.unlock(), { passive: true });
 
