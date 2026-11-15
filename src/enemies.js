@@ -159,6 +159,17 @@ class Enemy {
     if (!this.node.visible) return;
     this.node.position.set(this.x + this.width * 0.5, this.y + this.height * 0.5);
   }
+
+  resetForRecycle() {
+    this.dying = false;
+    this.hitFlight = null;
+    this.defeated = false;
+    this.node.removeFromParent();
+    this.node.visible = false;
+    this.node.rotation = 0;
+    this.node.alpha = 1;
+    this.node.scale.set(1, 1);
+  }
 }
 
 export class EnemyManager {
@@ -189,6 +200,13 @@ export class EnemyManager {
       );
       enemy.configure(3);
       this.enemies.push(enemy);
+    }
+    for (const enemy of this.enemies) {
+      const previousBeforeRecycle = enemy.platform.beforeRecycle;
+      enemy.platform.beforeRecycle = () => {
+        previousBeforeRecycle?.();
+        enemy.resetForRecycle();
+      };
     }
   }
 

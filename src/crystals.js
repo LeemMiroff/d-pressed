@@ -301,7 +301,11 @@ export class CrystalManager {
       right: new CrystalEntity(platform, this.frames, this.config, 'right', uiRoot, this.target),
     }));
     for (const platform of game.platformPool.items) {
-      platform.beforeRecycle = () => this.detachBurstCoins(platform);
+      const previousBeforeRecycle = platform.beforeRecycle;
+      platform.beforeRecycle = () => {
+        previousBeforeRecycle?.();
+        this.detachBurstCoins(platform);
+      };
     }
   }
 
