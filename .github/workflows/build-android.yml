@@ -39,6 +39,7 @@ jobs:
           npx --yes cordova@13 platform add android@14.0.1 || true
           printf '{"type":"commonjs"}\n' > platforms/android/cordova/package.json
           printf 'android.useAndroidX=true\nandroid.enableJetifier=true\n' > platforms/android/gradle.properties
+          npx --yes cordova@13 prepare android
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
