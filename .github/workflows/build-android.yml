@@ -27,11 +27,12 @@ jobs:
         run: |
           mkdir -p www
           cp -R dist/. www/
-          npx --yes cordova@13 platform add android@14.0.1
+          npx --yes cordova@13 platform add android@14.0.1 || true
+          printf '{"type":"commonjs"}\n' > platforms/android/cordova/package.json
       - name: Build debug APK
         run: |
           cd platforms/android
-          ./gradlew assembleDebug
+          gradle assembleDebug
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
