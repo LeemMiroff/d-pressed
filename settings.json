@@ -14,7 +14,8 @@
   "platforms.patternWeights.DOUBLE": 30,
   "platforms.maxPatternRepeat": 2,
   "platforms.platformSize.startScale": 1,
-  "platforms.platformSize.minScale": 0.55,
+  "platforms.platformSize.minScale": 0.7,
+  "platforms.platformSize.shrinkDurationSeconds": 180,
   "platforms.platformSize.shrinkPerPattern": 0.001,
   "platforms.content.SINGLE.enemyChance": 0.3,
   "platforms.content.SINGLE.crystalChance": 0.6,
@@ -25,13 +26,12 @@
   "platforms.content.DOUBLE.variants.0.oppositeSide.chestChance": 0.3,
   "platforms.content.DOUBLE.variants.0.oppositeSide.crystalChanceIfNoChest": 0.6,
   "platforms.hubPortal.everyPatterns": 20,
-  "player.maxHorizontalSpeed": 45,
-  "player.acceleration": 1800,
-  "player.braking": 1800,
+  "platforms.hubPortal.platformWidthRatio": 0.4,
+  "player.maxHorizontalSpeed": 65,
+  "player.acceleration": 800,
+  "player.braking": 800,
   "player.gravity": 480,
   "player.showHitbox": false,
   "platforms.enablePairedPlatforms": true,
-  "platforms.hubPortal.enabled": true,
-  "platforms.platformSize.shrinkDurationSeconds": 180,
-  "platforms.hubPortal.platformWidthRatio": 0.4
+  "platforms.hubPortal.enabled": true
 }
