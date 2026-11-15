@@ -29,6 +29,10 @@ jobs:
           cp -R dist/. www/
           npx --yes cordova@13 platform add android@14.0.1 || true
           printf '{"type":"commonjs"}\n' > platforms/android/cordova/package.json
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10'
       - name: Build debug APK
         run: |
           cd platforms/android
