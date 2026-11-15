@@ -125,6 +125,8 @@ export class PlatformPool {
     this.patternCount = 0;
     this.lastPatternType = null;
     this.patternRepeatCount = 0;
+    this.lastWallSide = null;
+    this.wallSideRepeatCount = 0;
     this.activeRunTime = 0;
 
     for (let index = 0; index < config.poolSize; index += 1) {
@@ -149,6 +151,8 @@ export class PlatformPool {
       this.patternCount = 0;
       this.lastPatternType = null;
       this.patternRepeatCount = 0;
+      this.lastWallSide = null;
+      this.wallSideRepeatCount = 0;
     }
 
     for (let index = 0; index < this.items.length; index += 1) {
@@ -195,14 +199,14 @@ export class PlatformPool {
         const gap = randomBetween(this.config.minGap, this.config.maxGap);
         y -= gap;
         const x = requestedType === 'WALL'
-          ? (Math.random() < 0.5 ? 0 : this.worldConfig.width - width)
+          ? this.randomWallX(width)
           : isEarly && !useSmall
             ? this.randomPlatformX(width)
           : this.reachableX(previousPlatform, width, gap);
         platform.configure(x, y, width, true);
       } else {
         const x = requestedType === 'WALL'
-          ? (Math.random() < 0.5 ? 0 : this.worldConfig.width - width)
+          ? this.randomWallX(width)
           : this.randomPlatformX(width);
         platform.configure(x, y, width, true);
       }
@@ -277,11 +281,16 @@ export class PlatformPool {
         const scaledRight = Math.floor(rightWidth * scale);
         group[0].configure(0, y, scaledLeft, true);
         group[1].configure(this.worldConfig.width - scaledRight, y, scaledRight, true);
+        this.configurePatternContent(group, 'DOUBLE');
       } else {
         const platform = group[0];
+        const type = platform.patternType === 'WALL' ? 'WALL' : 'SINGLE';
         const width = this.progression < 1 ? this.randomProgressiveWidth() : this.randomWidth();
-        const x = this.randomPlatformX(width);
+        const x = type === 'WALL'
+          ? this.randomWallX(width)
+          : this.randomPlatformX(width);
         platform.configure(x, y, width, true);
+        this.configurePatternContent([platform], type);
       }
       for (const platform of group) {
         platform.recycledThisFrame = true;
@@ -366,7 +375,7 @@ export class PlatformPool {
         const firstWidth = this.progression < 1 ? this.randomProgressiveWidth() : this.randomWidth();
         const secondWidth = this.progression < 1 ? this.randomProgressiveWidth() : this.randomWidth();
         const firstX = requestedType === 'WALL'
-          ? (Math.random() < 0.5 ? 0 : this.worldConfig.width - firstWidth)
+          ? this.randomWallX(firstWidth)
           : this.randomPlatformX(firstWidth);
         const secondY = y + this.config.height + this.config.minGap;
         first.configure(firstX, y, firstWidth, true);
@@ -393,7 +402,7 @@ export class PlatformPool {
       } else {
         const width = this.progression < 1 ? this.randomProgressiveWidth() : this.randomWidth();
         const x = requestedType === 'WALL'
-          ? (Math.random() < 0.5 ? 0 : this.worldConfig.width - width)
+          ? this.randomWallX(width)
           : Math.random() < 0.5
             ? this.randomPlatformX(width)
           : this.reachableX(lowestPlatform, width, gap);
@@ -467,6 +476,22 @@ export class PlatformPool {
     return Math.floor(randomBetween(clearance, maximumX - clearance + 1));
   }
 
+  randomWallX(width) {
+    let side;
+    if (!this.lastWallSide) {
+      side = Math.random() < 0.5 ? 'left' : 'right';
+      this.wallSideRepeatCount = 1;
+    } else {
+      const sameSideChance = this.wallSideRepeatCount >= 2 ? 0.1 : 0.25;
+      side = Math.random() < sameSideChance
+        ? this.lastWallSide
+        : this.lastWallSide === 'left' ? 'right' : 'left';
+      this.wallSideRepeatCount = side === this.lastWallSide ? this.wallSideRepeatCount + 1 : 1;
+    }
+    this.lastWallSide = side;
+    return side === 'left' ? 0 : this.worldConfig.width - width;
+  }
+
   randomEarlyWidth() {
     return Math.floor(randomBetween(this.config.earlyWideMinWidth, this.config.earlyWideMaxWidth + 1));
   }
@@ -494,17 +519,44 @@ export class PlatformPool {
     const weights = this.config.patternWeights || { SINGLE: 1, WALL: 0, DOUBLE: 0 };
     const candidates = ['SINGLE', 'WALL', 'DOUBLE'];
     let available = candidates.filter((type) => type !== 'DOUBLE' || this.config.enablePairedPlatforms);
+    const openingPatterns = this.config.openingPatterns || [];
+    if (this.patternCount < openingPatterns.length) {
+      const openingType = openingPatterns[this.patternCount];
+      if (available.includes(openingType)) return openingType;
+      if (openingType === 'DOUBLE') return 'SINGLE';
+    }
     if (this.lastPatternType && this.patternRepeatCount >= (this.config.maxPatternRepeat ?? 2)) {
       available = available.filter((type) => type !== this.lastPatternType);
     }
-    const total = available.reduce((sum, type) => sum + Math.max(0, Number(weights[type]) || 0), 0);
-    if (!total) return available[0] || 'SINGLE';
+    const transitions = this.config.patternTransitions || {};
+    if (this.lastPatternType === 'SINGLE' && available.includes('SINGLE')) {
+      const changeChance = Number.isFinite(transitions.singleToOtherChance)
+        ? transitions.singleToOtherChance
+        : 0.75;
+      if (Math.random() < changeChance) available = available.filter((type) => type !== 'SINGLE');
+      else available = ['SINGLE'];
+    } else if ((this.lastPatternType === 'WALL' || this.lastPatternType === 'DOUBLE') && available.includes('SINGLE')) {
+      const changeChance = Number.isFinite(transitions.wallOrDoubleToSingleChance)
+        ? transitions.wallOrDoubleToSingleChance
+        : 0.9;
+      if (Math.random() < changeChance) {
+        available = available.filter((type) => type !== this.lastPatternType);
+      } else {
+        available = available.filter((type) => type === this.lastPatternType);
+      }
+    }
+    return this.pickWeightedPattern(available, weights);
+  }
+
+  pickWeightedPattern(candidates, weights) {
+    const total = candidates.reduce((sum, type) => sum + Math.max(0, Number(weights[type]) || 0), 0);
+    if (!total) return candidates[0] || 'SINGLE';
     let roll = Math.random() * total;
-    for (const type of available) {
+    for (const type of candidates) {
       roll -= Math.max(0, Number(weights[type]) || 0);
       if (roll <= 0) return type;
     }
-    return available[available.length - 1];
+    return candidates[candidates.length - 1];
   }
 
   registerPattern(type) {

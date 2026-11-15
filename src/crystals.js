@@ -12,7 +12,8 @@ function overlaps(first, second) {
 }
 
 class CrystalEntity {
-  constructor(platform, frames, config, side, uiRoot, target) {
+  constructor(game, platform, frames, config, side, uiRoot, target) {
+    this.game = game;
     this.platform = platform;
     this.config = config;
     this.side = side;
@@ -105,29 +106,63 @@ class CrystalEntity {
 
   collect() {
     if (!this.active || this.flight) return;
+    this.active = false;
+    this.game.audio.reward();
+    this.frameIndex = 0;
+    this.frameElapsed = 0;
+    this.node.texture = this.frames[0];
+    const bounceHeight = randomBetween(
+      this.config.chestJumpMinHeight,
+      this.config.chestJumpMaxHeight,
+    ) * (this.config.crystalCollectBounceHeight / 14);
+    const bounceVelocityY = -Math.sqrt(2 * this.config.chestGravity * bounceHeight);
+    const firstBounceDistanceShare = this.config.burstCoinFirstBounceDistanceShare ?? 0.7;
+    const secondBounceHeight = bounceHeight * (this.config.burstCoinSecondBounceHeightMultiplier ?? 0.3);
+    const landingY = this.node.position.y;
     const globalPosition = this.node.toGlobal({
       x: this.node.width * 0.5,
       y: this.node.height * 0.5,
     });
-    this.uiRoot.addChild(this.node);
     const localPosition = this.uiRoot.toLocal(globalPosition);
-    this.node.position.set(
-      localPosition.x - this.node.width * 0.5,
-      localPosition.y - this.node.height * 0.5,
-    );
-    this.active = false;
+    const crystalCenterX = this.node.x + this.node.width * 0.5;
+    const platformCenterX = this.platform.width * 0.5;
+    const direction = Math.sign(platformCenterX - crystalCenterX) || (Math.random() < 0.5 ? -1 : 1);
+    const bounceDuration = (
+      -bounceVelocityY + Math.sqrt(
+        bounceVelocityY ** 2 + 2 * this.config.chestGravity * (landingY - this.node.position.y),
+      )
+    ) / this.config.chestGravity;
     this.flight = {
+      phase: 'bounce',
       elapsed: 0,
-      duration: this.config.flightDuration,
       startX: this.node.position.x,
       startY: this.node.position.y,
+      landingY,
+      bounceCount: 1,
+      firstBounceDistanceShare,
+      secondBounceHeight,
+      totalOffsetX: direction * this.config.crystalCollectBounceDistance,
+      velocityX: direction * this.config.crystalCollectBounceDistance
+        * firstBounceDistanceShare / bounceDuration,
+      velocityY: bounceVelocityY,
     };
   }
 
   updateFlight(deltaSeconds) {
     if (!this.flight) return false;
+    if (this.flight.phase === 'bounce') {
+      this.node.position.x += this.flight.velocityX * deltaSeconds;
+      this.node.position.y += this.flight.velocityY * deltaSeconds;
+      this.flight.velocityY += this.config.chestGravity * deltaSeconds;
+      if (this.node.position.y >= this.flight.landingY) {
+        this.node.position.y = this.flight.landingY;
+        if (this.flight.bounceCount === 1) this.startSecondBounce();
+        else this.startCounterFlight();
+      }
+      return false;
+    }
     this.flight.elapsed += deltaSeconds;
-    const progress = Math.min(1, this.flight.elapsed / this.flight.duration);
+    const progress = Math.min(1, this.flight.elapsed / this.config.flightDuration);
     const easedProgress = 1 - (1 - progress) ** 3;
     const targetX = this.target.x - this.node.width * 0.5;
     const targetY = this.target.y - this.node.height * 0.5;
@@ -145,6 +180,34 @@ class CrystalEntity {
     return true;
   }
 
+  startSecondBounce() {
+    this.flight.bounceCount = 2;
+    this.flight.velocityY = -Math.sqrt(2 * this.config.chestGravity * this.flight.secondBounceHeight);
+    const bounceDuration = (2 * -this.flight.velocityY) / this.config.chestGravity;
+    const remainingOffset = this.flight.totalOffsetX * (1 - this.flight.firstBounceDistanceShare);
+    this.flight.velocityX = remainingOffset / bounceDuration;
+  }
+
+  startCounterFlight() {
+    const globalPosition = this.node.toGlobal({
+      x: this.node.width * 0.5,
+      y: this.node.height * 0.5,
+    });
+    this.uiRoot.addChild(this.node);
+    const localPosition = this.uiRoot.toLocal(globalPosition);
+    this.node.position.set(
+      localPosition.x - this.node.width * 0.5,
+      localPosition.y - this.node.height * 0.5,
+    );
+    this.flight.phase = 'counter';
+    this.flight.elapsed = 0;
+    this.flight.startX = this.node.position.x;
+    this.flight.startY = this.node.position.y;
+    this.frameIndex = 0;
+    this.frameElapsed = 0;
+    this.node.texture = this.frames[0];
+  }
+
   getWorldBounds() {
     return {
       x: this.platform.x + this.node.x,
@@ -156,7 +219,7 @@ class CrystalEntity {
 }
 
 class BurstCoin {
-  constructor(manager, parent, centerX, floorY, offsetX, platformEntity = null) {
+  constructor(manager, parent, centerX, floorY, offsetX, platformEntity = null, jumpHeightMultiplier = 1) {
     this.manager = manager;
     this.parent = parent;
     this.platformEntity = platformEntity;
@@ -171,7 +234,10 @@ class BurstCoin {
     this.node.position.set(startX, startY);
     this.parent.addChild(this.node);
     this.phase = 'burst';
-    const jumpHeight = randomBetween(this.config.chestJumpMinHeight, this.config.chestJumpMaxHeight);
+    this.firstBounceDistanceShare = this.config.burstCoinFirstBounceDistanceShare ?? 0.7;
+    this.secondBounceHeightMultiplier = this.config.burstCoinSecondBounceHeightMultiplier ?? 0.5;
+    this.totalOffsetX = offsetX;
+    const jumpHeight = randomBetween(this.config.chestJumpMinHeight, this.config.chestJumpMaxHeight) * jumpHeightMultiplier;
     this.velocityY = -Math.sqrt(2 * this.config.chestGravity * jumpHeight);
     this.landingY = floorY - this.node.height;
     const verticalDistance = this.landingY - startY;
@@ -179,7 +245,8 @@ class BurstCoin {
       Math.sqrt(this.velocityY ** 2 + 2 * this.config.chestGravity * verticalDistance)
       - this.velocityY
     ) / this.config.chestGravity;
-    this.velocityX = offsetX / landingTime;
+    this.velocityX = (offsetX * this.firstBounceDistanceShare) / landingTime;
+    this.secondBounceHeight = jumpHeight * this.secondBounceHeightMultiplier;
     this.landDelay = 0;
     this.elapsed = 0;
     this.frameIndex = 0;
@@ -194,15 +261,19 @@ class BurstCoin {
       this.velocityY += this.config.chestGravity * deltaSeconds;
       if (this.node.position.y >= this.landingY) {
         this.node.position.y = this.landingY;
-        this.phase = 'landed';
-        this.landDelay = 0;
+        this.startSecondBounce();
       }
       return false;
     }
 
-    if (this.phase === 'landed') {
-      this.landDelay += deltaSeconds;
-      if (this.landDelay >= this.config.chestLandDelay) this.startCounterFlight();
+    if (this.phase === 'bounce') {
+      this.node.position.x += this.velocityX * deltaSeconds;
+      this.node.position.y += this.velocityY * deltaSeconds;
+      this.velocityY += this.config.chestGravity * deltaSeconds;
+      if (this.node.position.y >= this.landingY) {
+        this.node.position.y = this.landingY;
+        this.startCounterFlight();
+      }
       return false;
     }
 
@@ -228,6 +299,14 @@ class BurstCoin {
     this.counted = true;
     this.node.removeFromParent();
     return true;
+  }
+
+  startSecondBounce() {
+    this.phase = 'bounce';
+    this.velocityY = -Math.sqrt(2 * this.config.chestGravity * this.secondBounceHeight);
+    const bounceDuration = (2 * -this.velocityY) / this.config.chestGravity;
+    const remainingOffset = this.totalOffsetX * (1 - this.firstBounceDistanceShare);
+    this.velocityX = remainingOffset / bounceDuration;
   }
 
   detachFromPlatform() {
@@ -276,7 +355,7 @@ export class CrystalManager {
     this.game = game;
     this.config = game.config.crystals;
     this.uiRoot = uiRoot;
-    this.count = 0;
+    this.count = this.config.startingCount || 0;
     const frameWidth = Math.floor(texture.width / this.config.frameCount);
     this.frames = Array.from({ length: this.config.frameCount }, (_, index) => new Texture({
       source: texture.source,
@@ -289,7 +368,9 @@ export class CrystalManager {
     this.counterRoot.position.set(4, 4);
     this.counterLabel = new Text({
       text: '0',
-      style: { fontFamily: 'monospace', fontSize: 8, fill: 0xffffff },
+      resolution: 4,
+      roundPixels: true,
+      style: { fontFamily: 'monospace', fontSize: 8, fontWeight: 'bold', fill: 0xffffff },
     });
     this.counterLabel.position.set(13, 3);
     this.uiRoot.addChild(this.counterRoot, this.counterLabel);
@@ -297,8 +378,8 @@ export class CrystalManager {
     this.burstCoins = [];
     this.crystalsByPlatform = game.platformPool.items.map((platform) => ({
       platform,
-      left: new CrystalEntity(platform, this.frames, this.config, 'left', uiRoot, this.target),
-      right: new CrystalEntity(platform, this.frames, this.config, 'right', uiRoot, this.target),
+      left: new CrystalEntity(game, platform, this.frames, this.config, 'left', uiRoot, this.target),
+      right: new CrystalEntity(game, platform, this.frames, this.config, 'right', uiRoot, this.target),
     }));
     for (const platform of game.platformPool.items) {
       const previousBeforeRecycle = platform.beforeRecycle;
@@ -311,7 +392,7 @@ export class CrystalManager {
 
   reset() {
     this.clearBurstCoins();
-    this.count = 0;
+    this.count = this.config.startingCount || 0;
     this.updateCounter();
     for (const group of this.crystalsByPlatform) {
       group.left.reset();
@@ -354,11 +435,18 @@ export class CrystalManager {
   }
 
   spawnBurstCoins(parent, centerX, floorY, count = this.config.chestCoinCount, platformEntity = null) {
-    const spacing = this.config.chestCoinMinimumGap;
+    const spacing = this.config.chestCoinMinimumGap * (this.config.burstCoinHorizontalSpreadMultiplier || 1);
     const centerOffset = (count - 1) * 0.5;
+    const centerJump = this.config.burstCoinCenterJumpMultiplier ?? 1.5;
+    const edgeJump = this.config.burstCoinEdgeJumpMultiplier ?? 0.75;
+    const curve = this.config.burstCoinJumpCurve ?? 2;
+    const maximumDistance = Math.max(1, centerOffset);
     for (let index = 0; index < count; index += 1) {
       const offsetX = (index - centerOffset) * spacing;
-      this.burstCoins.push(new BurstCoin(this, parent, centerX, floorY, offsetX, platformEntity));
+      const distance = Math.abs(index - centerOffset) / maximumDistance;
+      const centerWeight = (1 - distance) ** curve;
+      const jumpHeightMultiplier = edgeJump + (centerJump - edgeJump) * centerWeight;
+      this.burstCoins.push(new BurstCoin(this, parent, centerX, floorY, offsetX, platformEntity, jumpHeightMultiplier));
     }
   }
 

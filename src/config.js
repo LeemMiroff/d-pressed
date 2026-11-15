@@ -53,6 +53,11 @@ export const CONFIG = Object.freeze({
       WALL: 35,
       DOUBLE: 30,
     },
+    openingPatterns: ['SINGLE', 'WALL', 'SINGLE', 'DOUBLE', 'SINGLE'],
+    patternTransitions: {
+      singleToOtherChance: 0.75,
+      wallOrDoubleToSingleChance: 0.9,
+    },
     maxPatternRepeat: 2,
     platformSize: {
       startScale: 1,
@@ -77,6 +82,7 @@ export const CONFIG = Object.freeze({
   },
   crystals: {
     enabled: true,
+    startingCount: 0,
     frameCount: 4,
     frameDuration: 0.1,
     edgeZone: 8,
@@ -89,6 +95,15 @@ export const CONFIG = Object.freeze({
     chestJumpMaxHeight: 20,
     chestCoinMinimumGap: 4,
     chestLandDelay: 0.06,
+    burstCoinHorizontalSpreadMultiplier: 2,
+    crystalCollectBounceHeight: 14,
+    crystalCollectBounceLandingOffset: 1,
+    crystalCollectBounceDistance: 5,
+    burstCoinCenterJumpMultiplier: 1.5,
+    burstCoinEdgeJumpMultiplier: 0.75,
+    burstCoinJumpCurve: 2,
+    burstCoinFirstBounceDistanceShare: 0.7,
+    burstCoinSecondBounceHeightMultiplier: 0.3,
   },
   chests: {
     spawnChance: 0.1,

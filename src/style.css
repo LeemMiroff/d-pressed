@@ -57,6 +57,10 @@ canvas {
 .inspector__telemetry dd { margin: 0; text-align: right; color: #fff; }
 .inspector details { margin: 10px 0; }
 .inspector summary { color: #fff; cursor: pointer; }
+.inspector__tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 10px 0 12px; }
+.inspector__tab { padding: 4px 6px; color: #c7a8a4; background: #2d2229; border: 1px solid #543642; font: inherit; font-size: 11px; cursor: pointer; }
+.inspector__tab--active { color: #17171d; background: #c7a8a4; border-color: #c7a8a4; }
+.inspector__tab-panel[hidden] { display: none; }
 .inspector__preset { display: flex; gap: 6px; margin: 8px 0; }
 .inspector__preset input,
 .inspector__preset select { min-width: 0; flex: 1; color: #fff; background: #2d2229; border: 1px solid #8e6874; font: inherit; }

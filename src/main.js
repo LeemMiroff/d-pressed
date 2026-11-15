@@ -29,13 +29,14 @@ async function start() {
   app.stage.addChild(viewport, uiRoot);
 
   await loadSavedConfig(CONFIG);
-  const [playerTexture, platformTexture, backgroundTexture, crystalTexture, chestTexture, enemyTexture] = await Promise.all([
+  const [playerTexture, platformTexture, backgroundTexture, crystalTexture, chestTexture, enemyTexture, scarecrowTexture] = await Promise.all([
     Assets.load('./ASEPRITE/gg.png'),
     Assets.load('./ASEPRITE/platforem.png'),
     Assets.load('./game-background.png'),
     Assets.load('./ASEPRITE/coin/1.png'),
     Assets.load('./ASEPRITE/sunduk/sunduk.png'),
     Assets.load('./ASEPRITE/vrag/vrag.png'),
+    Assets.load('./ASEPRITE/scarecrow.png'),
   ]);
   playerTexture.source.scaleMode = 'nearest';
   platformTexture.source.scaleMode = 'nearest';
@@ -43,12 +44,15 @@ async function start() {
   crystalTexture.source.scaleMode = 'nearest';
   chestTexture.source.scaleMode = 'nearest';
   enemyTexture.source.scaleMode = 'nearest';
+  scarecrowTexture.source.scaleMode = 'nearest';
   viewportBackground.texture = backgroundTexture;
   viewportBackground.width = CONFIG.world.width;
   viewportBackground.height = CONFIG.world.height;
   const input = new PointerInput(app.canvas);
-  const game = new Game(worldRoot, uiRoot, input, CONFIG, { playerTexture, platformTexture, crystalTexture, chestTexture, enemyTexture });
+  const game = new Game(worldRoot, uiRoot, input, CONFIG, { playerTexture, platformTexture, crystalTexture, chestTexture, enemyTexture, scarecrowTexture });
   const inspector = new Inspector(CONFIG, game);
+  window.addEventListener('pointerdown', () => game.audio.unlock(), { passive: true });
+  window.addEventListener('keydown', () => game.audio.unlock(), { passive: true });
 
   const resizeViewport = () => {
     const scale = Math.max(

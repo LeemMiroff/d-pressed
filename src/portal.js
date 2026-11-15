@@ -51,6 +51,7 @@ export class PortalManager {
     this.hubWidth = game.config.world.width * 0.8;
     this.hubY = game.config.world.height * 0.6;
     this.hubNode = new Container({ label: 'hub' });
+    this.hubNode.zIndex = 0;
     this.hubPlatform = new PlatformEntity(
       game.config.platforms,
       game.textures.platformTexture,
@@ -102,6 +103,7 @@ export class PortalManager {
       return;
     }
     if (this.game.mode === 'hub') {
+      this.game.upgradeManager?.update(deltaSeconds);
       this.updateHub(deltaSeconds);
       return;
     }

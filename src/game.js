@@ -5,6 +5,8 @@ import { EnemyManager } from './enemies.js';
 import { CrystalManager } from './crystals.js';
 import { ChestManager } from './chests.js';
 import { PortalManager } from './portal.js';
+import { UpgradeManager } from './upgrades.js';
+import { Sound } from './audio.js';
 
 function moveTowards(current, target, amount) {
   if (current < target) {
@@ -25,6 +27,7 @@ export class Game {
     this.simulationStep = 1 / 60;
     this.input = input;
     this.config = config;
+    this.audio = new Sound();
     this.worldSpeed = config.platforms.initialWorldSpeed;
     this.difficultyTime = 0;
     this.doublePlatformsDisabled = false;
@@ -36,6 +39,7 @@ export class Game {
       vx: 0,
       vy: 0,
       groundedOn: null,
+      damage: 1,
     };
     this.previousPlayerX = 0;
     this.previousPlayerY = 0;
@@ -51,6 +55,7 @@ export class Game {
     this.platformPool.initialize();
 
     this.playerShape = new Sprite(textures.playerTexture);
+    this.playerShape.zIndex = 5;
     this.playerShape.width = config.player.visualWidth;
     this.playerShape.height = config.player.visualHeight;
     worldRoot.addChild(this.playerShape);
@@ -58,6 +63,7 @@ export class Game {
       .rect(0, 0, this.player.width, this.player.height)
       .fill({ color: 0xff3b30, alpha: 0.04 })
       .stroke({ width: 0.5, color: 0xff3b30, alpha: 0.9 });
+    this.hitboxShape.zIndex = 6;
     this.hitboxShape.visible = config.player.showHitbox;
     worldRoot.addChild(this.hitboxShape);
 
@@ -79,9 +85,10 @@ export class Game {
     this.chestManager = new ChestManager(this, textures.chestTexture);
     this.chestManager.reset();
     this.portalManager = new PortalManager(this);
+    this.upgradeManager = new UpgradeManager(this, this.portalManager.hubPlatform.node, this.portalManager.hubPlatform, textures.scarecrowTexture);
   }
 
-  restart(preserveProgression = false) {
+  restart(preserveProgression = false, startInHub = true) {
     const preservedWorldSpeed = this.worldSpeed;
     this.input.release();
     this.simulationAccumulator = 0;
@@ -110,7 +117,9 @@ export class Game {
     this.crystalManager?.reset();
     this.chestManager?.reset();
     this.portalManager?.reset();
-    this.portalManager?.startInitialHub();
+    this.upgradeManager?.reset(!preserveProgression);
+    this.mode = 'game';
+    if (startInHub) this.portalManager?.startInitialHub();
   }
 
   resizeWorld(height) {
@@ -119,7 +128,7 @@ export class Game {
     this.platformPool.initialStates.length = 0;
     this.gameOverOverlayShape.clear().rect(0, 0, this.config.world.width, height).fill(0x000000);
     this.gameOverRestartText.position.set(this.config.world.width * 0.5, height * 0.5);
-    this.restart();
+    this.restart(false, true);
   }
 
   update(deltaSeconds) {
@@ -198,6 +207,7 @@ export class Game {
     this.updateVerticalMovement(dt);
     if (this.player.y + this.player.height < 0 || this.player.y > this.config.world.height) {
       this.gameOver = true;
+      this.audio.over();
       this.gameOverOverlay.visible = true;
       this.input.release();
       return;
@@ -255,6 +265,7 @@ export class Game {
     );
 
     if (landingPlatform) {
+      this.audio.land();
       this.player.y = landingPlatform.y - this.player.height;
       this.player.vy = 0;
       this.player.groundedOn = landingPlatform;

@@ -15,7 +15,8 @@ const DEATH_VELOCITY_Y = -156;
 const IDLE_FRAME_DURATION = 0.08;
 
 class Enemy {
-  constructor(platform, worldRoot, worldHeight, frames) {
+  constructor(game, platform, worldRoot, worldHeight, frames) {
+    this.game = game;
     this.platform = platform;
     this.worldRoot = worldRoot;
     this.worldHeight = worldHeight;
@@ -111,16 +112,18 @@ class Enemy {
   }
 
   tryHit(previousCenterX, currentCenterX, playerTop, playerBottom, direction) {
-    if (this.defeated || this.hitFlight || !this.platform.active || playerBottom < this.platform.y - 1 || playerTop > this.platform.y + 2) return false;
+    if (this.defeated || this.hitFlight || !this.node.visible || !this.platform.active || playerBottom < this.platform.y - 1 || playerTop > this.platform.y + 2) return false;
     const centerX = this.platform.x + this.x + this.width * 0.5;
     const crossed = (previousCenterX < centerX && currentCenterX >= centerX)
       || (previousCenterX > centerX && currentCenterX <= centerX);
     if (!crossed || direction === 0 || (this.maxHp > 1 && this.lastHitDirection === direction)) return false;
     this.lastHitDirection = direction;
-    this.hp -= 1;
+    this.game.audio.hit();
+    this.hp -= this.game.player.damage || 1;
     this.node.scale.x *= -1;
     if (this.hp <= 0) {
       this.defeated = true;
+      this.game.audio.bonus();
       this.dying = true;
       const worldX = this.platform.x + this.x;
       const worldY = this.platform.y + this.y;
@@ -193,6 +196,7 @@ export class EnemyManager {
     }));
     for (let index = 0; index < game.platformPool.items.length; index += 1) {
       const enemy = new Enemy(
+        game,
         game.platformPool.items[index],
         game.worldRoot,
         game.config.world.height,

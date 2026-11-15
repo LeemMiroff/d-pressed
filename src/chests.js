@@ -73,6 +73,7 @@ class ChestEntity {
 
   open() {
     if (!this.active || this.opened) return;
+    this.manager.game.audio.chest();
     this.opened = true;
     this.active = false;
     this.frameIndex = 0;

@@ -12,11 +12,12 @@ const CONTROLS = [
   { path: ['platforms', 'patternWeights', 'SINGLE'], label: 'Вес SINGLE', min: 0, max: 100, step: 1 },
   { path: ['platforms', 'patternWeights', 'WALL'], label: 'Вес WALL', min: 0, max: 100, step: 1 },
   { path: ['platforms', 'patternWeights', 'DOUBLE'], label: 'Вес DOUBLE', min: 0, max: 100, step: 1 },
+  { path: ['platforms', 'patternTransitions', 'singleToOtherChance'], label: 'После SINGLE: шанс смены типа', min: 0, max: 1, step: 0.01 },
+  { path: ['platforms', 'patternTransitions', 'wallOrDoubleToSingleChance'], label: 'После WALL/DOUBLE: шанс сменить тип', min: 0, max: 1, step: 0.01 },
   { path: ['platforms', 'maxPatternRepeat'], label: 'Максимум одинаковых паттернов подряд', min: 1, max: 10, step: 1 },
   { path: ['platforms', 'platformSize', 'startScale'], label: 'Начальный масштаб платформ', min: 0.1, max: 2, step: 0.01 },
   { path: ['platforms', 'platformSize', 'minScale'], label: 'Минимальный масштаб платформ', min: 0.1, max: 2, step: 0.01 },
   { path: ['platforms', 'platformSize', 'shrinkDurationSeconds'], label: 'Время уменьшения до минимума (секунды)', min: 1, max: 3600, step: 1 },
-  { path: ['platforms', 'platformSize', 'shrinkPerPattern'], label: 'Уменьшение за паттерн', min: 0, max: 0.1, step: 0.001 },
   { path: ['platforms', 'content', 'SINGLE', 'enemyChance'], label: 'SINGLE: шанс врага', min: 0, max: 1, step: 0.01 },
   { path: ['platforms', 'content', 'SINGLE', 'crystalChance'], label: 'SINGLE: шанс кристаллов', min: 0, max: 1, step: 0.01 },
   { path: ['platforms', 'content', 'SINGLE', 'chestChance'], label: 'SINGLE: шанс сундука', min: 0, max: 1, step: 0.01 },
@@ -27,6 +28,7 @@ const CONTROLS = [
   { path: ['platforms', 'content', 'DOUBLE', 'variants', 0, 'oppositeSide', 'crystalChanceIfNoChest'], label: 'DOUBLE: шанс кристаллов', min: 0, max: 1, step: 0.01 },
   { path: ['platforms', 'hubPortal', 'everyPatterns'], label: 'Портал каждые паттерны', min: 1, max: 200, step: 1 },
   { path: ['platforms', 'hubPortal', 'platformWidthRatio'], label: 'Ширина портальной платформы', min: 0.2, max: 0.49, step: 0.01 },
+  { path: ['crystals', 'startingCount'], label: 'Стартовые кристаллы', min: 0, max: 9999, step: 1 },
   { path: ['player', 'maxHorizontalSpeed'], label: 'Скорость игрока', min: 1, max: 200, step: 1 },
   { path: ['player', 'acceleration'], label: 'Ускорение игрока', min: 1, max: 2000, step: 1 },
   { path: ['player', 'braking'], label: 'Торможение игрока', min: 1, max: 2000, step: 1 },
@@ -42,6 +44,22 @@ function read(config, path) {
 function write(config, path, value) {
   const parent = path.slice(0, -1).reduce((value, key) => value[key], config);
   parent[path[path.length - 1]] = value;
+}
+
+const TAB_DEFINITIONS = [
+  { id: 'platforms', label: 'Платформы' },
+  { id: 'player', label: 'Игрок и скорость' },
+  { id: 'content', label: 'Содержимое' },
+  { id: 'portal', label: 'Порталы' },
+  { id: 'economy', label: 'Экономика' },
+];
+
+function controlTab(definition) {
+  if (definition.path[0] === 'player') return 'player';
+  if (definition.path[0] === 'crystals') return 'economy';
+  if (definition.path.includes('content')) return 'content';
+  if (definition.path.includes('hubPortal')) return 'portal';
+  return 'platforms';
 }
 
 export async function loadSavedConfig(config) {
@@ -82,11 +100,35 @@ export class Inspector {
     this.root = document.createElement('aside');
     this.root.className = 'inspector';
     this.root.hidden = true;
-    this.root.innerHTML = '<div class="inspector__header"><strong>Инспектор</strong><button type="button" data-close>×</button></div><p class="inspector__hint">Состояние потока настраивается в логических единицах мира.</p><details open><summary>Состояние потока</summary><label class="inspector__check"><input type="checkbox" data-paired>Использовать двойные платформы</label><label class="inspector__check"><input type="checkbox" data-hub-portal>Использовать порталы в хаб</label><label class="inspector__check"><input type="checkbox" data-hitbox>Показывать hitbox</label><div class="inspector__controls"></div></details><details open><summary>Пресеты</summary><div class="inspector__preset"><input type="text" data-preset-name placeholder="Название пресета"><button type="button" data-preset-save>Сохранить</button></div><div class="inspector__preset"><select data-preset-list></select><button type="button" data-preset-load>Применить</button><button type="button" data-preset-delete>Удалить</button></div></details><div class="inspector__actions"><button type="button" data-save>Сохранить настройки</button><span data-status></span></div><dl class="inspector__telemetry"></dl>';
+    this.root.innerHTML = '<div class="inspector__header"><strong>Инспектор</strong><button type="button" data-close>×</button></div><p class="inspector__hint">Состояние потока настраивается в логических единицах мира.</p><details open><summary>Состояние потока</summary><label class="inspector__check"><input type="checkbox" data-paired>Использовать двойные платформы</label><label class="inspector__check"><input type="checkbox" data-hub-portal>Использовать порталы в хаб</label><label class="inspector__check"><input type="checkbox" data-hitbox>Показывать hitbox</label><div class="inspector__tabs" data-tabs></div><div class="inspector__tab-panels" data-tab-panels></div></details><details open><summary>Пресеты</summary><div class="inspector__preset"><input type="text" data-preset-name placeholder="Название пресета"><button type="button" data-preset-save>Сохранить</button></div><div class="inspector__preset"><select data-preset-list></select><button type="button" data-preset-load>Применить</button><button type="button" data-preset-overwrite>Перезаписать</button></div></details><div class="inspector__actions"><button type="button" data-save>Сохранить настройки</button><span data-status></span></div><dl class="inspector__telemetry"></dl>';
     document.body.append(this.root);
     this.telemetry = this.root.querySelector('.inspector__telemetry');
 
-    const controls = this.root.querySelector('.inspector__controls');
+    const tabs = this.root.querySelector('[data-tabs]');
+    const tabPanels = this.root.querySelector('[data-tab-panels]');
+    const panelByTab = new Map();
+    for (const [index, definition] of TAB_DEFINITIONS.entries()) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = `inspector__tab${index === 0 ? ' inspector__tab--active' : ''}`;
+      button.textContent = definition.label;
+      button.dataset.tab = definition.id;
+      tabs.append(button);
+      const panel = document.createElement('div');
+      panel.className = 'inspector__tab-panel';
+      panel.dataset.tabPanel = definition.id;
+      panel.hidden = index !== 0;
+      tabPanels.append(panel);
+      panelByTab.set(definition.id, panel);
+      button.addEventListener('click', () => {
+        for (const candidate of tabs.querySelectorAll('.inspector__tab')) {
+          candidate.classList.toggle('inspector__tab--active', candidate === button);
+        }
+        for (const candidate of tabPanels.querySelectorAll('.inspector__tab-panel')) {
+          candidate.hidden = candidate !== panel;
+        }
+      });
+    }
     const hitbox = this.root.querySelector('[data-hitbox]');
     const paired = this.root.querySelector('[data-paired]');
     const hubPortal = this.root.querySelector('[data-hub-portal]');
@@ -118,11 +160,13 @@ export class Inspector {
       const values = this.presets[presetList.value];
       if (values) this.applySettings(values);
     });
-    this.root.querySelector('[data-preset-delete]').addEventListener('click', () => {
+    this.root.querySelector('[data-preset-overwrite]').addEventListener('click', () => {
       if (!presetList.value) return;
-      delete this.presets[presetList.value];
+      const name = presetList.value;
+      this.presets[name] = this.captureSettings();
       this.writePresets();
       this.renderPresetList();
+      presetList.value = name;
     });
     hitbox.addEventListener('change', () => game.setHitboxVisible(hitbox.checked));
     for (const definition of CONTROLS) {
@@ -147,7 +191,7 @@ export class Inspector {
       };
       rangeInput.addEventListener('input', () => updateValue(rangeInput, numberInput));
       numberInput.addEventListener('input', () => updateValue(numberInput, rangeInput));
-      controls.append(row);
+      panelByTab.get(controlTab(definition)).append(row);
       this.rows.push({ input: numberInput, definition });
     }
 
@@ -186,6 +230,7 @@ export class Inspector {
     } catch {
       status.textContent = 'Сохранено локально';
     }
+    this.game.restart(true);
     window.setTimeout(() => { status.textContent = ''; }, 2000);
   }
 
