@@ -60,13 +60,11 @@ async function start() {
   window.addEventListener('keydown', () => game.audio.unlock(), { passive: true });
 
   const resizeViewport = () => {
-    const scale = Math.max(
-      1,
-      Math.floor(Math.min(
-        app.screen.width / CONFIG.world.width,
-        app.screen.height / CONFIG.render.baseHeight * 4,
-      )),
-    );
+    const widthScale = app.screen.width / CONFIG.world.width;
+    const heightScale = app.screen.height / (CONFIG.render.baseHeight / 4);
+    // On portrait phones the width is the limiting dimension. Keep that
+    // exact width so CSS viewport pixels do not become side borders.
+    const scale = Math.max(1, widthScale <= heightScale ? widthScale : Math.floor(heightScale));
     const worldHeight = app.screen.height / scale;
     CONFIG.world.height = worldHeight;
     CONFIG.platforms.startY = worldHeight - 24;
