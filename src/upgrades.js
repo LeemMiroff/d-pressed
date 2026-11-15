@@ -83,10 +83,12 @@ class UpgradeStation {
     this.manager.upgradeCount += 1;
     this.manager.game.audio.reward();
     if (this.type === 'speed') {
-      this.manager.game.config.player.maxHorizontalSpeed = Math.min(
+      const nextSpeed = Math.min(
         this.config.maximum,
         this.manager.game.config.player.maxHorizontalSpeed + this.config.increment,
       );
+      this.manager.game.config.player.maxHorizontalSpeed = nextSpeed;
+      this.manager.game.applySpeedUpgrade(nextSpeed);
     } else {
       this.manager.game.player.damage = Math.min(
         this.config.maximum,

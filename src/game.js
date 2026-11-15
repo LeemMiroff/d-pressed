@@ -233,6 +233,13 @@ export class Game {
     );
   }
 
+  applySpeedUpgrade(speed) {
+    if (this.mode !== 'hub') return;
+
+    const direction = this.input.isRightHeld ? 1 : -1;
+    this.player.vx = direction * speed;
+  }
+
   updateVerticalMovement(deltaSeconds) {
     const groundedPlatform = this.player.groundedOn;
 
