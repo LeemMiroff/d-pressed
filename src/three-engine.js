@@ -105,7 +105,7 @@ export class ThreeGame {
   }
 
   createHub() {
-    this.hub = { x: 0, y: this.config.world.height * 0.6, width: this.config.world.width * 0.8, height: this.config.platforms.height, active: true };
+    this.hub = { x: 0, y: this.hubTopY(), width: this.config.world.width * 0.8, height: this.config.platforms.height, active: true };
     this.hubGroup = new THREE.Group();
     this.hubMesh = this.makePlatformMesh(1, this.hub.height, 0x8e6874);
     this.hubMesh.position.x = this.hub.width / 2;
@@ -254,7 +254,7 @@ export class ThreeGame {
     this.rightWall.scale.y = this.worldHeight / 240;
     this.leftWall.position.set(-2, this.worldHeight / 2, -2);
     this.rightWall.position.set(this.config.world.width + 2, this.worldHeight / 2, -2);
-    this.hub.y = this.worldHeight * 0.6;
+    this.hub.y = this.hubTopY();
     this.hubLanding.y = this.hub.y + this.hub.height + this.config.platforms.minGap;
     this.hubLanding.previousY = this.hubLanding.y;
     this.hubLanding.active = true;
@@ -265,6 +265,12 @@ export class ThreeGame {
   }
 
   logicalY(value) { return this.worldHeight - value; }
+
+  hubTopY() {
+    const configuredRatio = Number(this.config.platforms.hubTopRatio);
+    const ratio = Number.isFinite(configuredRatio) ? clamp(configuredRatio, 0.2, 0.8) : 0.4;
+    return this.worldHeight * ratio;
+  }
 
   applyAllViews() {
     for (const platform of this.platforms) {
@@ -508,7 +514,7 @@ export class ThreeGame {
     this.mode = 'run';
     this.hubMoving = false;
     this.hubGroup.visible = false;
-    this.hub.y = this.worldHeight * 0.6;
+    this.hub.y = this.hubTopY();
     this.hubLanding.y = this.hub.y + this.hub.height + this.config.platforms.minGap;
     this.hubLanding.previousY = this.hubLanding.y;
     this.hubLanding.active = true;
@@ -521,7 +527,7 @@ export class ThreeGame {
     this.mode = 'hub';
     this.hubGroup.visible = true;
     this.hubLandingGroup.visible = true;
-    this.hub.y = this.worldHeight * 0.6;
+    this.hub.y = this.hubTopY();
     this.hubLanding.y = this.hub.y + this.hub.height + this.config.platforms.minGap;
     this.hubLanding.previousY = this.hubLanding.y;
     for (const platform of this.platforms) platform.node.visible = false;
@@ -670,11 +676,16 @@ export class ThreeGame {
       this.hub.y -= this.worldSpeed * dt;
       this.hubLanding.previousY = this.hubLanding.y;
       this.hubLanding.y -= this.worldSpeed * dt;
-      if (this.hub.y + this.hub.height < 0) {
-        this.hubMoving = false;
+      const offscreenMargin = Math.max(this.config.platforms.height * 2, 16);
+      if (this.hub.y + this.hub.height < -offscreenMargin) {
         this.hubGroup.visible = false;
+      }
+      if (this.hubLanding.y + this.hubLanding.height < -offscreenMargin) {
         this.hubLandingGroup.visible = false;
         this.hubLanding.active = false;
+      }
+      if (!this.hubGroup.visible && !this.hubLandingGroup.visible) {
+        this.hubMoving = false;
       }
     }
     this.recyclePlatforms();
@@ -909,18 +920,62 @@ export class ThreeGame {
   }
 
   updatePortals() {
+    if (this.portals) {
+      const stale = this.portals.some(({ platform }) => (
+        !platform.active
+        || !platform.portalPlatform
+        || platform.y + platform.height < -Math.max(this.config.platforms.height * 2, 16)
+      ));
+      if (stale) this.clearPortals();
+    }
     if (this.portals || !this.config.platforms.hubPortal.enabled || this.patternCount < this.nextPortalPattern) return;
-    const pair = this.groups.find((group) => group.length === 2 && group.every((platform) => platform.active && platform.y > this.worldHeight));
+    const existingPair = this.groups.find((group) => group.length === 2 && group.every((platform) => platform.active && platform.y > this.worldHeight));
+    const pair = existingPair || this.createPortalPair();
     if (!pair) return;
+    if (existingPair) this.configurePortalPair(pair);
     this.portals = pair.map((platform, index) => {
       this.clearPlatformEntities(platform);
       platform.portalPlatform = true;
+      platform.spawnContent = { enemy: false, crystals: false, chest: false };
       const view = new THREE.Mesh(new THREE.TorusGeometry(3, 0.8, 8, 18), new THREE.MeshStandardMaterial({ color: 0x9f6cff, emissive: 0x4b1f80, emissiveIntensity: 1.8, roughness: 0.3 }));
-      view.rotation.x = Math.PI / 2;
+      view.renderOrder = 5;
       this.world.add(view);
       return { platform, view, side: index };
     });
     this.nextPortalPattern += Math.max(1, this.config.platforms.hubPortal.everyPatterns);
+  }
+
+  configurePortalPair(pair) {
+    const [first, second] = pair;
+    const pairGap = this.pairedPlatformGap();
+    const maximumRatio = Math.min(0.49, Math.max(0.2, (this.config.world.width - pairGap) / (2 * this.config.world.width)));
+    const configuredRatio = Number(this.config.platforms.hubPortal.platformWidthRatio);
+    const ratio = clamp(Number.isFinite(configuredRatio) ? configuredRatio : 0.4, 0.2, maximumRatio);
+    const width = Math.max(this.player.width + 2, Math.floor(this.config.world.width * ratio));
+    const baseY = Math.max(first.y, second.y);
+    this.configurePlatform(first, 0, baseY, width, 'DOUBLE');
+    this.configurePlatform(second, this.config.world.width - width, baseY, width, 'DOUBLE');
+    first.spawnContent = { enemy: false, crystals: false, chest: false };
+    second.spawnContent = { enemy: false, crystals: false, chest: false };
+  }
+
+  createPortalPair() {
+    const candidates = this.groups
+      .filter((group) => group.length === 1 && group[0].active && group[0].y > this.worldHeight)
+      .sort((first, second) => second[0].y - first[0].y);
+    if (candidates.length < 2) return null;
+
+    const firstGroup = candidates[0];
+    const secondGroup = candidates[1];
+    const first = firstGroup[0];
+    const second = secondGroup[0];
+
+    const insertIndex = Math.min(this.groups.indexOf(firstGroup), this.groups.indexOf(secondGroup));
+    this.groups = this.groups.filter((group) => group !== firstGroup && group !== secondGroup);
+    const pair = [first, second];
+    this.groups.splice(insertIndex, 0, pair);
+    this.configurePortalPair(pair);
+    return pair;
   }
 
   checkPortalEntry() {
@@ -981,7 +1036,7 @@ export class ThreeGame {
     entity.view.visible = entity.active !== false && (!entity.defeated || entity.dying) && platformVisible;
   }
 
-  render() { this.checkPortalEntry(); this.playerView.position.set(this.player.x + this.player.width / 2, this.logicalY(this.player.y + this.player.height / 2), 1); if (this.portals) this.portals.forEach((portal) => portal.view.position.set(portal.platform.x + (portal.side ? portal.platform.width - 2 : 2), this.logicalY(portal.platform.y - 5), 1)); this.renderer.render(this.scene, this.camera); }
+  render() { this.checkPortalEntry(); this.playerView.position.set(this.player.x + this.player.width / 2, this.logicalY(this.player.y + this.player.height / 2), 1); if (this.portals) this.portals.forEach((portal) => portal.view.position.set(portal.platform.x + (portal.side ? portal.platform.width - 2 : 2), this.logicalY(portal.platform.y - 5), 6)); this.renderer.render(this.scene, this.camera); }
 }
 
 export async function loadThreeConfig() {

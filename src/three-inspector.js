@@ -21,6 +21,8 @@ export class ThreeInspector {
       ['platforms.maxGap', 'Максимальный зазор', 8, 100],
       ['platforms.minWidth', 'Минимальная ширина', 10, 100],
       ['platforms.maxWidth', 'Максимальная ширина', 10, 110],
+      ['platforms.hubPortal.everyPatterns', 'Портал каждые паттерны', 1, 200, 1],
+      ['platforms.hubPortal.platformWidthRatio', 'Ширина платформ портала', 0.2, 0.49, 0.01],
       ['player.maxHorizontalSpeed', 'Скорость игрока', 1, 120],
       ['player.acceleration', 'Ускорение', 1, 2000],
       ['player.braking', 'Торможение', 1, 2000],

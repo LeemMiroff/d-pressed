@@ -79,6 +79,7 @@ export const CONFIG = Object.freeze({
       everyPatterns: 20,
       platformWidthRatio: 0.4,
     },
+    hubTopRatio: 0.4,
   },
   crystals: {
     enabled: true,
