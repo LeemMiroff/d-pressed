@@ -1,99 +1,43 @@
-import { Application, Assets, Container, Sprite } from 'pixi.js';
-import { CONFIG } from './config.js';
-import { Game } from './game.js';
-import { PointerInput } from './input.js';
-import { Inspector, loadSavedConfig } from './inspector.js';
 import './style.css';
+import { ThreeGame, loadThreeConfig } from './three-engine.js';
+import { ThreeInspector } from './three-inspector.js';
 
 async function start() {
-  const app = new Application();
-  await app.init({
-    resizeTo: window,
-    background: CONFIG.render.outerBackgroundColor,
-    antialias: false,
-    autoDensity: true,
-    resolution: Math.max(1, window.devicePixelRatio || 1),
-  });
-
   const mount = document.querySelector('#app');
-  mount.appendChild(app.canvas);
-  app.canvas.setAttribute('aria-label', 'Игровое поле');
-
-  const viewport = new Container({ label: 'game-viewport' });
-  const worldRoot = new Container({ label: 'game-world' });
-  worldRoot.sortableChildren = true;
-  const uiRoot = new Container({ label: 'interface-layer' });
-  const viewportBackground = new Sprite();
-  worldRoot.scale.set(1);
-  viewport.addChild(viewportBackground, worldRoot);
-  app.stage.addChild(viewport, uiRoot);
-
-  await loadSavedConfig(CONFIG);
-  const [playerTexture, platformTexture, backgroundTexture, crystalTexture, chestTexture, enemyTexture, scarecrowTexture] = await Promise.all([
-    Assets.load('./ASEPRITE/gg.png'),
-    Assets.load('./ASEPRITE/platforem.png'),
-    Assets.load('./game-background.png'),
-    Assets.load('./ASEPRITE/coin/1.png'),
-    Assets.load('./ASEPRITE/sunduk/sunduk.png'),
-    Assets.load('./ASEPRITE/vrag/vrag.png'),
-    Assets.load('./ASEPRITE/scarecrow.png'),
-  ]);
-  playerTexture.source.scaleMode = 'nearest';
-  platformTexture.source.scaleMode = 'nearest';
-  backgroundTexture.source.scaleMode = 'nearest';
-  crystalTexture.source.scaleMode = 'nearest';
-  chestTexture.source.scaleMode = 'nearest';
-  enemyTexture.source.scaleMode = 'nearest';
-  scarecrowTexture.source.scaleMode = 'nearest';
-  viewportBackground.texture = backgroundTexture;
-  viewportBackground.width = CONFIG.world.width;
-  viewportBackground.height = CONFIG.world.height;
-  const input = new PointerInput(app.canvas);
-  const game = new Game(worldRoot, uiRoot, input, CONFIG, { playerTexture, platformTexture, crystalTexture, chestTexture, enemyTexture, scarecrowTexture });
-  const inspector = new Inspector(CONFIG, game);
-  app.canvas.addEventListener('pointerdown', (event) => {
-    if (!game.gameOver) return;
-    event.preventDefault();
-    game.restart();
-  }, { passive: false });
-  window.addEventListener('pointerdown', () => game.audio.unlock(), { passive: true });
-  window.addEventListener('keydown', () => game.audio.unlock(), { passive: true });
-
-  const resizeViewport = () => {
-    const widthScale = app.screen.width / CONFIG.world.width;
-    const heightScale = app.screen.height / (CONFIG.render.baseHeight / 4);
-    // On portrait phones the width is the limiting dimension. Keep that
-    // exact width so CSS viewport pixels do not become side borders.
-    const scale = Math.max(1, widthScale <= heightScale ? widthScale : Math.floor(heightScale));
-    const worldHeight = app.screen.height / scale;
-    CONFIG.world.height = worldHeight;
-    CONFIG.platforms.startY = worldHeight - 24;
-    viewportBackground.width = CONFIG.world.width;
-    viewportBackground.height = worldHeight;
-    const viewportWidth = CONFIG.world.width * scale;
-    const viewportHeight = worldHeight * scale;
-
-    viewport.scale.set(scale);
-    viewport.position.set(
-      Math.round((app.screen.width - viewportWidth) / 2),
-      Math.round((app.screen.height - viewportHeight) / 2),
-    );
-    uiRoot.scale.set(scale);
-    uiRoot.position.copyFrom(viewport.position);
-    game?.portalManager?.resizeWorld(worldHeight);
-    game?.resizeWorld(worldHeight);
-  };
-
-  resizeViewport();
-  window.addEventListener('resize', resizeViewport);
-  window.addEventListener('keydown', (event) => {
-    if (event.code === 'KeyR' && !event.repeat) {
-      event.preventDefault();
-      game.restart();
+  const canvas = document.createElement('canvas');
+  canvas.setAttribute('aria-label', 'Игровое поле');
+  mount.append(canvas);
+  const config = await loadThreeConfig();
+  const game = new ThreeGame(canvas, config);
+  const inspector = new ThreeInspector(config, game);
+  let pointerId = null;
+  const setHeld = (held) => { game.input.held = held; };
+  canvas.addEventListener('pointerdown', (event) => { pointerId = event.pointerId; canvas.setPointerCapture?.(pointerId); setHeld(true); if (game.gameOver) game.restart(); }, { passive: false });
+  canvas.addEventListener('pointerup', (event) => { if (event.pointerId === pointerId) { pointerId = null; setHeld(false); } }, { passive: false });
+  canvas.addEventListener('pointercancel', () => { pointerId = null; setHeld(false); }, { passive: false });
+  window.addEventListener('keydown', (event) => { if (event.code === 'KeyD' || ['d', 'д'].includes(event.key?.toLowerCase())) { event.preventDefault(); setHeld(true); } if (event.code === 'KeyR' && !event.repeat) { event.preventDefault(); game.restart(); } });
+  window.addEventListener('keyup', (event) => { if (event.code === 'KeyD' || ['d', 'д'].includes(event.key?.toLowerCase())) { event.preventDefault(); setHeld(false); } });
+  window.addEventListener('blur', () => { setHeld(false); game.pause(); });
+  window.addEventListener('focus', () => { game.resume(); last = performance.now(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      setHeld(false);
+      game.pause();
+    } else {
+      game.resume();
+      last = performance.now();
     }
   });
-  app.ticker.add((ticker) => game.update(ticker.deltaMS / 1000));
-  app.ticker.add(() => inspector.update());
+  window.addEventListener('resize', () => game.resize());
+  let last = performance.now();
+  const frame = (time) => { const delta = Math.min(Math.max((time - last) / 1000, 0), 0.1); last = time; game.update(delta); inspector.update(); requestAnimationFrame(frame); };
+  requestAnimationFrame(frame);
 }
 
-start();
+start().catch((error) => {
+  console.error('D-Pressed startup failed', error);
+  const message = document.createElement('pre');
+  message.textContent = `D-PRESSED STARTUP ERROR\n${error?.stack || error}`;
+  message.style.cssText = 'position:fixed;inset:16px;z-index:20;color:#ffb4a8;background:#17171d;font:12px monospace;white-space:pre-wrap;';
+  document.body.append(message);
+});

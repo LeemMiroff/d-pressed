@@ -4,8 +4,8 @@ export const CONFIG = Object.freeze({
     height: 240,
   },
   player: {
-    width: 4,
-    height: 4,
+    width: 8,
+    height: 8,
     visualWidth: 10,
     visualHeight: 11,
     visualOffsetX: -3,
@@ -109,6 +109,12 @@ export const CONFIG = Object.freeze({
     spawnChance: 0.1,
     frameCount: 8,
     frameDuration: 0.06,
+  },
+  camera: {
+    fov: 52,
+    tiltDegrees: 12,
+    distanceMultiplier: 1,
+    centerOffset: 8,
   },
   render: {
     baseWidth: 480,
