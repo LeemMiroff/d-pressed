@@ -110,6 +110,16 @@ export const CONFIG = Object.freeze({
     frameCount: 8,
     frameDuration: 0.06,
   },
+  upgrades: {
+    firstCost: 25,
+    costMultiplier: 1.2,
+    speedIncrement: 5,
+    speedMaximum: 100,
+    damageIncrement: 1,
+    damageMaximum: 6,
+    requiredPasses: 3,
+    passWindowSeconds: 0.5,
+  },
   camera: {
     fov: 52,
     tiltDegrees: 12,

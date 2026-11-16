@@ -69,6 +69,7 @@ export class ThreeGame {
     this.platforms = [];
     this.groups = [];
     this.portals = null;
+    this.transitionRemaining = 0;
     this.hubMoving = false;
     this.entities = [];
     this.createBackground();
@@ -285,6 +286,8 @@ export class ThreeGame {
     platform.previousY = platform.y;
     platform.width = width;
     platform.patternType = type;
+    platform.hubEntryOnly = false;
+    platform.portalPlatform = false;
     platform.active = true;
     platform.node.visible = true;
     platform.mesh.scale.set(width, 1, 1);
@@ -467,6 +470,7 @@ export class ThreeGame {
 
   restart(preserveProgression = false, startInHub = true) {
     this.input.held = false;
+    this.transitionRemaining = 0;
     if (!preserveProgression) {
       this.difficultyTime = 0;
       this.activeRunTime = 0;
@@ -479,20 +483,13 @@ export class ThreeGame {
       this.crystalCount = this.config.crystals.startingCount || 0;
       this.damage = 1;
       this.upgradeCount = 0;
-      this.stations.forEach((station) => { station.level = 0; station.passes = 0; });
+      this.nextPortalPattern = Math.max(1, this.config.platforms.hubPortal.everyPatterns);
+      this.stations.forEach((station) => { station.level = 0; station.passes = 0; station.passWindow = 0; station.firstDirection = 0; station.previousCenter = null; });
     }
     this.gameOver = false;
     this.gameOverPanel.hidden = true;
     this.mode = 'run';
-    this.hubMoving = false;
-    this.hub.y = this.worldHeight * 0.6;
-    this.hubLanding.y = this.hub.y + this.hub.height + this.config.platforms.minGap;
-    this.hubLanding.previousY = this.hubLanding.y;
-    this.hubLanding.active = true;
-    this.hubGroup.visible = false;
-    this.clearEntities();
-    this.generateInitial(preserveProgression);
-    this.prepareRouteBelowHub();
+    this.rebuildRoute(preserveProgression);
     const start = this.platforms[this.config.player.startPlatformIndex];
     this.player.groundedOn = start;
     this.player.x = start.x + (start.width - this.player.width) / 2;
@@ -504,6 +501,22 @@ export class ThreeGame {
     this.applyAllViews();
   }
 
+  rebuildRoute(preserveProgression = true) {
+    this.player.groundedOn = null;
+    this.player.vx = 0;
+    this.player.vy = 0;
+    this.mode = 'run';
+    this.hubMoving = false;
+    this.hubGroup.visible = false;
+    this.hub.y = this.worldHeight * 0.6;
+    this.hubLanding.y = this.hub.y + this.hub.height + this.config.platforms.minGap;
+    this.hubLanding.previousY = this.hubLanding.y;
+    this.hubLanding.active = true;
+    this.clearEntities();
+    this.generateInitial(preserveProgression);
+    this.prepareRouteBelowHub();
+  }
+
   enterHub() {
     this.mode = 'hub';
     this.hubGroup.visible = true;
@@ -511,14 +524,27 @@ export class ThreeGame {
     this.hub.y = this.worldHeight * 0.6;
     this.hubLanding.y = this.hub.y + this.hub.height + this.config.platforms.minGap;
     this.hubLanding.previousY = this.hubLanding.y;
-    for (const platform of this.platforms) {
-      platform.node.visible = platform.active && platform.y >= this.hubLanding.y + this.hubLanding.height;
-    }
+    for (const platform of this.platforms) platform.node.visible = false;
     this.hubLandingGroup.visible = true;
     this.player.groundedOn = this.hub;
     this.player.x = 2;
     this.player.y = this.hub.y - this.player.height;
+    this.player.vx = 0;
+    this.player.vy = 0;
+    for (const station of this.stations) {
+      station.passes = 0;
+      station.passWindow = 0;
+      station.firstDirection = 0;
+      station.previousCenter = null;
+    }
     this.hubMoving = false;
+  }
+
+  enterHubFromPortal() {
+    this.transitionRemaining = 0;
+    this.rebuildRoute(true);
+    this.enterHub();
+    this.applyAllViews();
   }
 
   prepareRouteBelowHub() {
@@ -591,9 +617,8 @@ export class ThreeGame {
       if (entity.kind === 'enemy') entity.view.rotation.z = 0;
       if (entity.view) entity.view.visible = false;
     }
-    for (const platform of this.platforms) { platform.enemy = null; platform.crystals = []; platform.crystalsSpawned = false; platform.chest = null; platform.portalPlatform = false; }
-    if (this.portals) this.portals.forEach((portal) => this.world.remove(portal.view));
-    this.portals = null;
+    for (const platform of this.platforms) { platform.enemy = null; platform.crystals = []; platform.crystalsSpawned = false; platform.chest = null; platform.portalPlatform = false; platform.hubEntryOnly = false; }
+    this.clearPortals();
   }
 
   update(dt) {
@@ -625,14 +650,17 @@ export class ThreeGame {
       this.updateHorizontal(dt);
       this.player.y = this.hub.y - this.player.height;
       this.updateStations(dt);
-      this.updateEntities(dt);
       // Keep the player grounded while any part of the hitbox is over the Hub.
       // Start the run only after the player has completely crossed its edge.
       if (this.player.x >= this.hub.x + this.hub.width) this.exitHub();
       this.applyAllViews();
       return;
     }
-    if (this.mode === 'transition') return;
+    if (this.mode === 'transition') {
+      this.transitionRemaining = Math.max(0, this.transitionRemaining - dt);
+      if (this.transitionRemaining === 0) this.enterHubFromPortal();
+      return;
+    }
     this.difficultyTime += dt;
     this.activeRunTime += dt;
     if (this.config.platforms.useFlowProgression) this.worldSpeed = Math.min(this.config.platforms.initialWorldSpeed + ((this.config.platforms.targetWorldSpeed - this.config.platforms.initialWorldSpeed) / this.config.platforms.targetWorldSpeedTime) * this.difficultyTime, this.config.platforms.targetWorldSpeed);
@@ -740,6 +768,13 @@ export class ThreeGame {
     }
     let collectedCrystalThisFrame = false;
     for (const entity of this.entities) {
+      if (entity.kind === 'enemy' && entity.active && !entity.dying && !entity.defeated && !entity.platform) {
+        // An enemy can outlive its pooled platform for one frame during a
+        // recycle or route rebuild. Do not let that stale object enter combat.
+        entity.active = false;
+        entity.view.visible = false;
+        continue;
+      }
       if (entity.kind === 'enemy' && entity.dying) {
         entity.deathVelocityY += 440 * dt;
         entity.x += entity.deathVelocityX * dt;
@@ -813,7 +848,7 @@ export class ThreeGame {
   }
 
   hitEnemy(enemy, stomp = false) {
-    if (enemy.defeated || enemy.hitTimer > 0 || enemy.hitFlightTimer > 0) return;
+    if (!enemy || !enemy.active || enemy.defeated || enemy.hitTimer > 0 || enemy.hitFlightTimer > 0) return;
     const direction = Math.sign(this.player.vx) || (this.player.x < enemy.x ? 1 : -1);
     if (!stomp && enemy.lastHitDirection === direction) return;
     if (stomp) enemy.health = 0;
@@ -825,8 +860,8 @@ export class ThreeGame {
     if (enemy.health <= 0) {
       enemy.defeated = true;
       const deathPlatform = enemy.platform;
-      enemy.platform.spawnContent.enemy = false;
-      enemy.platform.enemy = null;
+      if (deathPlatform?.spawnContent) deathPlatform.spawnContent.enemy = false;
+      if (deathPlatform?.enemy === enemy) deathPlatform.enemy = null;
       enemy.dying = true;
       enemy.deathVelocityX = direction > 0 ? 30 : -30;
       enemy.deathVelocityY = -156;
@@ -878,6 +913,7 @@ export class ThreeGame {
     const pair = this.groups.find((group) => group.length === 2 && group.every((platform) => platform.active && platform.y > this.worldHeight));
     if (!pair) return;
     this.portals = pair.map((platform, index) => {
+      this.clearPlatformEntities(platform);
       platform.portalPlatform = true;
       const view = new THREE.Mesh(new THREE.TorusGeometry(3, 0.8, 8, 18), new THREE.MeshStandardMaterial({ color: 0x9f6cff, emissive: 0x4b1f80, emissiveIntensity: 1.8, roughness: 0.3 }));
       view.rotation.x = Math.PI / 2;
@@ -890,7 +926,23 @@ export class ThreeGame {
   checkPortalEntry() {
     if (!this.portals) return;
     const entered = this.portals.some((portal) => overlap(this.player, { x: portal.platform.x + (portal.side ? portal.platform.width - 4 : 0), y: portal.platform.y - 10, width: 4, height: 10 }));
-    if (entered) { this.portals.forEach((portal) => this.world.remove(portal.view)); this.portals = null; this.mode = 'transition'; window.setTimeout(() => this.enterHub(), 250); }
+    if (entered) {
+      this.clearPortals();
+      this.mode = 'transition';
+      this.input.held = false;
+      this.transitionRemaining = 0.25;
+    }
+  }
+
+  clearPortals() {
+    if (!this.portals) return;
+    for (const portal of this.portals) {
+      portal.platform.portalPlatform = false;
+      this.world.remove(portal.view);
+      portal.view.geometry.dispose();
+      portal.view.material.dispose();
+    }
+    this.portals = null;
   }
 
   updateStations(dt) {
@@ -900,19 +952,20 @@ export class ThreeGame {
       if (Math.abs(this.player.y + this.player.height - this.hub.y) > 8) continue;
       if (station.previousCenter === null) { station.previousCenter = center; continue; }
       const crossed = (station.previousCenter - station.localX) * (center - station.localX) <= 0 && station.previousCenter !== center;
-      if (crossed) { const direction = Math.sign(center - station.previousCenter); const expected = station.passes % 2 === 0 ? station.firstDirection : -station.firstDirection; if (!station.firstDirection || station.passWindow === 0 || station.passes === 0 || direction !== expected) { station.firstDirection = direction; station.passes = 1; } else station.passes += 1; station.passWindow = 0.5; if (station.passes >= 3) { this.activateStation(station); station.passes = 0; station.firstDirection = 0; } }
+      if (crossed) { const direction = Math.sign(center - station.previousCenter); const expected = station.passes % 2 === 0 ? station.firstDirection : -station.firstDirection; if (!station.firstDirection || station.passWindow === 0 || station.passes === 0 || direction !== expected) { station.firstDirection = direction; station.passes = 1; } else station.passes += 1; station.passWindow = this.config.upgrades.passWindowSeconds; if (station.passes >= this.config.upgrades.requiredPasses) { this.activateStation(station); station.passes = 0; station.firstDirection = 0; } }
       station.previousCenter = center;
     }
   }
 
   activateStation(station) {
-    const cost = Math.round(25 * (1.2 ** this.upgradeCount));
+    const upgrades = this.config.upgrades;
+    const cost = Math.round(upgrades.firstCost * (upgrades.costMultiplier ** this.upgradeCount));
     if (this.crystalCount < cost) return;
     this.crystalCount -= cost;
     this.upgradeCount += 1;
     station.level += 1;
-    if (station.label === 'SPEED') this.config.player.maxHorizontalSpeed = Math.min(100, this.config.player.maxHorizontalSpeed + 5);
-    else this.damage = Math.min(6, this.damage + 1);
+    if (station.label === 'SPEED') this.config.player.maxHorizontalSpeed = Math.min(upgrades.speedMaximum, this.config.player.maxHorizontalSpeed + upgrades.speedIncrement);
+    else this.damage = Math.min(upgrades.damageMaximum, this.damage + upgrades.damageIncrement);
   }
 
   setGameOver() { this.gameOver = true; this.mode = 'game-over'; this.gameOverPanel.hidden = false; this.input.held = false; }
