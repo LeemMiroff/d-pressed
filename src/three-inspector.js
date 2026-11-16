@@ -1,3 +1,12 @@
+const TAB_DEFINITIONS = [
+  ['flow', 'Поток'],
+  ['player', 'Игрок'],
+  ['camera', 'Камера'],
+  ['lighting', 'Свет'],
+  ['presets', 'Пресеты'],
+  ['debug', 'Диагностика'],
+];
+
 export class ThreeInspector {
   constructor(config, game) {
     this.config = config;
@@ -5,65 +14,170 @@ export class ThreeInspector {
     this.root = document.createElement('aside');
     this.root.className = 'inspector';
     this.root.hidden = true;
-    this.root.innerHTML = '<div class="inspector__header"><strong>Three Inspector</strong><button type="button" data-close>×</button></div><p class="inspector__hint">Runtime-настройки Three.js. Нажмите I, чтобы открыть.</p><label class="inspector__check"><input type="checkbox" data-paired>Двойные платформы</label><label class="inspector__check"><input type="checkbox" data-portals>Порталы в хаб</label><div data-controls></div><div class="inspector__actions"><button type="button" data-save>Сохранить на сервер</button><span data-status></span></div><details open><summary>Пресеты</summary><div class="inspector__preset"><input type="text" data-preset-name placeholder="Имя нового пресета"><button type="button" data-preset-save>Сохранить</button></div><div class="inspector__preset"><select data-preset-list></select><button type="button" data-preset-apply>Применить</button><button type="button" data-preset-overwrite>Перезаписать</button></div></details><dl class="inspector__telemetry"></dl>';
+    this.root.innerHTML = `
+      <div class="inspector__header">
+        <strong>Three Inspector</strong>
+        <button type="button" data-close aria-label="Закрыть Inspector">×</button>
+      </div>
+      <p class="inspector__hint">Runtime-настройки Three.js. Нажмите I, чтобы открыть.</p>
+      <nav class="inspector__tabs" role="tablist" aria-label="Разделы Inspector">
+        ${TAB_DEFINITIONS.map(([id, label], index) => `<button type="button" class="inspector__tab${index === 0 ? ' is-active' : ''}" data-tab="${id}" role="tab" aria-selected="${index === 0}" aria-controls="inspector-panel-${id}">${label}</button>`).join('')}
+      </nav>
+      <div class="inspector__panels" data-controls-root>
+        <section class="inspector__panel is-active" id="inspector-panel-flow" data-panel="flow" role="tabpanel" tabindex="0">
+          <label class="inspector__check"><input type="checkbox" data-paired>Двойные платформы</label>
+          <label class="inspector__check"><input type="checkbox" data-portals>Порталы в хаб</label>
+          <div data-controls="flow"></div>
+        </section>
+        <section class="inspector__panel" id="inspector-panel-player" data-panel="player" role="tabpanel" tabindex="0">
+          <div data-controls="player"></div>
+        </section>
+        <section class="inspector__panel" id="inspector-panel-camera" data-panel="camera" role="tabpanel" tabindex="0">
+          <div data-controls="camera"></div>
+        </section>
+        <section class="inspector__panel" id="inspector-panel-lighting" data-panel="lighting" role="tabpanel" tabindex="0">
+          <label class="inspector__check"><input type="checkbox" data-shadows>Тени</label>
+          <div data-controls="lighting"></div>
+        </section>
+        <section class="inspector__panel" id="inspector-panel-presets" data-panel="presets" role="tabpanel" tabindex="0">
+          <div class="inspector__preset">
+            <input type="text" data-preset-name placeholder="Имя нового пресета" aria-label="Имя нового пресета">
+            <button type="button" data-preset-save>Сохранить</button>
+          </div>
+          <div class="inspector__preset">
+            <select data-preset-list aria-label="Выбранный пресет"></select>
+            <button type="button" data-preset-apply>Применить</button>
+            <button type="button" data-preset-overwrite>Перезаписать</button>
+          </div>
+        </section>
+        <section class="inspector__panel" id="inspector-panel-debug" data-panel="debug" role="tabpanel" tabindex="0">
+          <dl class="inspector__telemetry"></dl>
+        </section>
+      </div>
+      <div class="inspector__actions">
+        <button type="button" data-save>Сохранить настройки</button>
+        <span data-status aria-live="polite"></span>
+      </div>
+    `;
     document.body.append(this.root);
-    this.controls = this.root.querySelector('[data-controls]');
+    this.controls = this.root.querySelector('[data-controls-root]');
     this.telemetry = this.root.querySelector('.inspector__telemetry');
     this.presets = {};
     this.lastTelemetryAt = 0;
-    this.root.querySelector('[data-paired]').checked = config.platforms.enablePairedPlatforms;
-    this.root.querySelector('[data-portals]').checked = config.platforms.hubPortal.enabled;
-    this.root.querySelector('[data-paired]').addEventListener('change', (event) => { config.platforms.enablePairedPlatforms = event.target.checked; game.restart(true, false); });
-    this.root.querySelector('[data-portals]').addEventListener('change', (event) => { config.platforms.hubPortal.enabled = event.target.checked; game.restart(true, false); });
+    this.pairedInput = this.root.querySelector('[data-paired]');
+    this.portalsInput = this.root.querySelector('[data-portals]');
+    this.shadowsInput = this.root.querySelector('[data-shadows]');
+    this.panels = Object.fromEntries([...this.root.querySelectorAll('[data-panel]')].map((panel) => [panel.dataset.panel, panel]));
+
+    this.pairedInput.checked = config.platforms.enablePairedPlatforms;
+    this.portalsInput.checked = config.platforms.hubPortal.enabled;
+    this.shadowsInput.checked = config.lighting?.shadowsEnabled !== false;
+    this.pairedInput.addEventListener('change', (event) => {
+      config.platforms.enablePairedPlatforms = event.target.checked;
+      game.restart(true, false);
+    });
+    this.portalsInput.addEventListener('change', (event) => {
+      config.platforms.hubPortal.enabled = event.target.checked;
+      game.restart(true, false);
+    });
+    this.shadowsInput.addEventListener('change', (event) => {
+      config.lighting.shadowsEnabled = event.target.checked;
+      game.applyLighting();
+    });
+
     const definitions = [
-      ['platforms.initialWorldSpeed', 'Начальная скорость', 1, 120],
-      ['platforms.minGap', 'Минимальный зазор', 8, 80],
-      ['platforms.maxGap', 'Максимальный зазор', 8, 100],
-      ['platforms.minWidth', 'Минимальная ширина', 10, 100],
-      ['platforms.maxWidth', 'Максимальная ширина', 10, 110],
-      ['platforms.hubPortal.everyPatterns', 'Портал каждые паттерны', 1, 200, 1],
-      ['platforms.hubPortal.platformWidthRatio', 'Ширина платформ портала', 0.2, 0.49, 0.01],
-      ['player.maxHorizontalSpeed', 'Скорость игрока', 1, 120],
-      ['player.acceleration', 'Ускорение', 1, 2000],
-      ['player.braking', 'Торможение', 1, 2000],
-      ['player.gravity', 'Гравитация', 1, 2000],
-      ['camera.fov', 'Камера FOV', 35, 80, 1],
-      ['camera.tiltDegrees', 'Наклон камеры', 0, 35, 1],
-      ['camera.distanceMultiplier', 'Дистанция камеры', 0.7, 1.6, 0.01],
-      ['camera.centerOffset', 'Центр камеры', -40, 40, 1],
+      ['platforms.initialWorldSpeed', 'Начальная скорость', 1, 120, 1, 'flow'],
+      ['platforms.minGap', 'Минимальный зазор', 8, 80, 1, 'flow'],
+      ['platforms.maxGap', 'Максимальный зазор', 8, 100, 1, 'flow'],
+      ['platforms.minWidth', 'Минимальная ширина', 10, 100, 1, 'flow'],
+      ['platforms.maxWidth', 'Максимальная ширина', 10, 110, 1, 'flow'],
+      ['platforms.hubPortal.everyPatterns', 'Портал каждые паттерны', 1, 200, 1, 'flow'],
+      ['platforms.hubPortal.platformWidthRatio', 'Ширина платформ портала', 0.2, 0.49, 0.01, 'flow'],
+      ['player.maxHorizontalSpeed', 'Скорость игрока', 1, 120, 1, 'player'],
+      ['player.acceleration', 'Ускорение', 1, 2000, 1, 'player'],
+      ['player.braking', 'Торможение', 1, 2000, 1, 'player'],
+      ['player.gravity', 'Гравитация', 1, 2000, 1, 'player'],
+      ['camera.fov', 'Камера FOV', 35, 80, 1, 'camera'],
+      ['camera.tiltDegrees', 'Наклон камеры', 0, 35, 1, 'camera'],
+      ['camera.distanceMultiplier', 'Дистанция камеры', 0.7, 1.6, 0.01, 'camera'],
+      ['camera.centerOffset', 'Центр камеры', -40, 40, 1, 'camera'],
+      ['lighting.ambientIntensity', 'Общий свет', 0, 4, 0.05, 'lighting'],
+      ['lighting.keyIntensity', 'Основной свет', 0, 8, 0.05, 'lighting'],
+      ['lighting.keyPositionX', 'Основной свет X', -240, 240, 1, 'lighting'],
+      ['lighting.keyPositionY', 'Основной свет Y', -240, 360, 1, 'lighting'],
+      ['lighting.keyPositionZ', 'Основной свет Z', -240, 360, 1, 'lighting'],
+      ['lighting.fillIntensity', 'Заполняющий свет', 0, 500, 1, 'lighting'],
+      ['lighting.fillDistance', 'Дальность заполняющего', 20, 600, 1, 'lighting'],
+      ['lighting.fillPositionX', 'Заполняющий свет X', -240, 240, 1, 'lighting'],
+      ['lighting.fillPositionY', 'Заполняющий свет Y', -240, 360, 1, 'lighting'],
+      ['lighting.fillPositionZ', 'Заполняющий свет Z', -240, 360, 1, 'lighting'],
     ];
     definitions.forEach((definition) => this.addControl(...definition));
+    this.root.querySelectorAll('[data-tab]').forEach((tab) => tab.addEventListener('click', () => this.activateTab(tab.dataset.tab)));
     this.root.querySelector('[data-close]').addEventListener('click', () => { this.root.hidden = true; });
     this.root.querySelector('[data-save]').addEventListener('click', () => this.save());
     this.root.querySelector('[data-preset-save]').addEventListener('click', () => this.savePreset());
     this.root.querySelector('[data-preset-apply]').addEventListener('click', () => this.applyPreset());
     this.root.querySelector('[data-preset-overwrite]').addEventListener('click', () => this.overwritePreset());
     this.loadPresets();
-    window.addEventListener('keydown', (event) => { if (event.code === 'KeyI' && !event.repeat) { event.preventDefault(); this.root.hidden = !this.root.hidden; } });
+    window.addEventListener('keydown', (event) => {
+      if (event.code !== 'KeyI' || event.repeat) return;
+      event.preventDefault();
+      this.root.hidden = !this.root.hidden;
+      if (!this.root.hidden) this.root.querySelector('.inspector__tab.is-active')?.focus();
+    });
+  }
+
+  activateTab(tabId) {
+    if (!this.panels[tabId]) return;
+    this.root.querySelectorAll('[data-tab]').forEach((tab) => {
+      const active = tab.dataset.tab === tabId;
+      tab.classList.toggle('is-active', active);
+      tab.setAttribute('aria-selected', String(active));
+      tab.tabIndex = active ? 0 : -1;
+    });
+    Object.entries(this.panels).forEach(([id, panel]) => panel.classList.toggle('is-active', id === tabId));
   }
 
   read(path) { return path.split('.').reduce((value, key) => value?.[key], this.config); }
-  write(path, value) { const keys = path.split('.'); const target = keys.slice(0, -1).reduce((value, key) => value[key], this.config); target[keys.at(-1)] = value; }
 
-  addControl(path, label, min, max, step = 1) {
+  write(path, value) {
+    const keys = path.split('.');
+    const target = keys.slice(0, -1).reduce((value, key) => value[key], this.config);
+    target[keys.at(-1)] = value;
+  }
+
+  addControl(path, label, min, max, step = 1, category = 'flow') {
     const row = document.createElement('label');
     row.className = 'inspector__row';
     row.dataset.path = path;
-    row.innerHTML = `<span>${label}</span><input type="number" min="${min}" max="${max}" step="${step}"><input type="range" min="${min}" max="${max}" step="${step}">`;
+    row.innerHTML = `<span>${label}</span><input type="number" min="${min}" max="${max}" step="${step}" aria-label="${label}"><input type="range" min="${min}" max="${max}" step="${step}" aria-label="${label}">`;
     const number = row.querySelector('input[type=number]');
     const range = row.querySelector('input[type=range]');
-    const update = (source, target) => { const value = Math.max(min, Math.min(max, Number(source.value))); this.write(path, value); source.value = value; target.value = value; this.game.resize(); this.game.restart(true, false); };
+    const update = (source, target) => {
+      const value = Math.max(min, Math.min(max, Number(source.value)));
+      this.write(path, value);
+      source.value = value;
+      target.value = value;
+      if (path.startsWith('lighting.')) {
+        this.game.applyLighting();
+        return;
+      }
+      this.game.resize();
+      this.game.restart(true, false);
+    };
     number.value = this.read(path);
     range.value = this.read(path);
     number.addEventListener('input', () => update(number, range));
     range.addEventListener('input', () => update(range, number));
-    this.controls.append(row);
+    this.root.querySelector(`[data-controls="${category}"]`).append(row);
   }
 
   captureSettings() {
-    const payload = Object.fromEntries([...this.controls.querySelectorAll('.inspector__row')].map((row) => [row.dataset.path, Number(row.querySelector('input[type=number]').value)]));
-    payload['platforms.enablePairedPlatforms'] = this.config.platforms.enablePairedPlatforms;
-    payload['platforms.hubPortal.enabled'] = this.config.platforms.hubPortal.enabled;
+    const payload = Object.fromEntries([...this.root.querySelectorAll('.inspector__row')].map((row) => [row.dataset.path, Number(row.querySelector('input[type=number]').value)]));
+    payload['platforms.enablePairedPlatforms'] = this.pairedInput.checked;
+    payload['platforms.hubPortal.enabled'] = this.portalsInput.checked;
+    payload['lighting.shadowsEnabled'] = this.shadowsInput.checked;
     return payload;
   }
 
@@ -141,7 +255,7 @@ export class ThreeInspector {
   }
 
   applySettings(values) {
-    for (const row of this.controls.querySelectorAll('.inspector__row')) {
+    for (const row of this.root.querySelectorAll('.inspector__row')) {
       const value = values[row.dataset.path];
       if (!Number.isFinite(value)) continue;
       this.write(row.dataset.path, value);
@@ -150,12 +264,17 @@ export class ThreeInspector {
     }
     if (typeof values['platforms.enablePairedPlatforms'] === 'boolean') {
       this.config.platforms.enablePairedPlatforms = values['platforms.enablePairedPlatforms'];
-      this.root.querySelector('[data-paired]').checked = values['platforms.enablePairedPlatforms'];
+      this.pairedInput.checked = values['platforms.enablePairedPlatforms'];
     }
     if (typeof values['platforms.hubPortal.enabled'] === 'boolean') {
       this.config.platforms.hubPortal.enabled = values['platforms.hubPortal.enabled'];
-      this.root.querySelector('[data-portals]').checked = values['platforms.hubPortal.enabled'];
+      this.portalsInput.checked = values['platforms.hubPortal.enabled'];
     }
+    if (typeof values['lighting.shadowsEnabled'] === 'boolean') {
+      this.config.lighting.shadowsEnabled = values['lighting.shadowsEnabled'];
+      this.shadowsInput.checked = values['lighting.shadowsEnabled'];
+    }
+    this.game.applyLighting();
     this.game.resize();
     this.game.restart(true, false);
   }

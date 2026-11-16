@@ -14,5 +14,18 @@
   "camera.centerOffset": 8,
   "platforms.enablePairedPlatforms": true,
   "platforms.hubPortal.enabled": true,
-  "_savedAt": 1794854890666
+  "_savedAt": 1794863287175,
+  "platforms.hubPortal.everyPatterns": 20,
+  "platforms.hubPortal.platformWidthRatio": 0.4,
+  "lighting.ambientIntensity": 1,
+  "lighting.keyIntensity": 4,
+  "lighting.keyPositionX": 240,
+  "lighting.keyPositionY": 360,
+  "lighting.keyPositionZ": 90,
+  "lighting.fillIntensity": 180,
+  "lighting.fillDistance": 260,
+  "lighting.fillPositionX": 60,
+  "lighting.fillPositionY": 80,
+  "lighting.fillPositionZ": 70,
+  "lighting.shadowsEnabled": true
 }
