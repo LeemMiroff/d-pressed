@@ -43,18 +43,20 @@ export class CrystalMotion {
     const entity = this.entity;
     const crystals = this.game.config.crystals;
     const centerOffset = (count - 1) * 0.5;
-    const offsetX = (index - centerOffset) * crystals.chestCoinMinimumGap * (crystals.burstCoinHorizontalSpreadMultiplier || 1) * 0.5;
+    // All burst crystals share one origin. The horizontal spread is expressed
+    // only through their launch velocities, so they still fan out in flight.
+    const spreadOffsetX = (index - centerOffset) * crystals.chestCoinMinimumGap * (crystals.burstCoinHorizontalSpreadMultiplier || 1) * 0.5;
     const distance = Math.abs(index - centerOffset) / Math.max(1, centerOffset);
     const curve = crystals.burstCoinJumpCurve ?? 2;
     const centerWeight = (1 - distance) ** curve;
     const jumpMultiplier = (crystals.burstCoinEdgeJumpMultiplier ?? 0.75)
       + ((crystals.burstCoinCenterJumpMultiplier ?? 1.5) - (crystals.burstCoinEdgeJumpMultiplier ?? 0.75)) * centerWeight;
     const jumpHeight = randomBetween(crystals.chestJumpMinHeight, crystals.chestJumpMaxHeight) * jumpMultiplier;
-    entity.x = x + offsetX;
+    entity.x = x - entity.width / 2;
     entity.y = floorY;
     entity.floorY = floorY;
     entity.platform = platform;
-    entity.velocityX = offsetX * (crystals.burstCoinFirstBounceDistanceShare ?? 0.7);
+    entity.velocityX = spreadOffsetX * (crystals.burstCoinFirstBounceDistanceShare ?? 0.7);
     entity.velocityY = -Math.sqrt(2 * crystals.chestGravity * jumpHeight);
     entity.secondBounceHeight = jumpHeight * (crystals.burstCoinSecondBounceHeightMultiplier ?? 0.3);
     entity.phase = 'burst';
