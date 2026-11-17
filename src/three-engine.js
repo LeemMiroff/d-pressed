@@ -67,8 +67,6 @@ export class ThreeGame {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.keyLight.castShadow = true;
     this.keyLight.shadow.mapSize.set(1024, 1024);
-    this.keyLight.shadow.bias = -0.0005;
-    this.keyLight.shadow.normalBias = 0.03;
     this.applyLighting();
     this.input = { held: false };
     this.mode = 'hub';
@@ -197,6 +195,8 @@ export class ThreeGame {
       Number.isFinite(lighting.keyPositionZ) ? lighting.keyPositionZ : 90,
     );
     this.keyLight.intensity = Number.isFinite(lighting.keyIntensity) ? lighting.keyIntensity : 2.4;
+    this.keyLight.shadow.bias = Number.isFinite(lighting.shadowBias) ? lighting.shadowBias : -0.0005;
+    this.keyLight.shadow.normalBias = Number.isFinite(lighting.shadowNormalBias) ? lighting.shadowNormalBias : 0.03;
     this.updateShadowCameraCoverage(worldHeight);
     this.fillLight.intensity = Number.isFinite(lighting.fillIntensity) ? lighting.fillIntensity : 180;
     this.fillLight.distance = Number.isFinite(lighting.fillDistance) ? lighting.fillDistance : 260;

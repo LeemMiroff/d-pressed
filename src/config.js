@@ -138,6 +138,8 @@ export const CONFIG = Object.freeze({
     fillPositionX: 60,
     fillPositionY: 80,
     fillPositionZ: 70,
+    shadowBias: -0.0005,
+    shadowNormalBias: 0.03,
     shadowsEnabled: true,
   },
   render: {

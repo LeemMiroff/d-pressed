@@ -22,6 +22,8 @@
   "lighting.keyPositionX": 240,
   "lighting.keyPositionY": 360,
   "lighting.keyPositionZ": 90,
+  "lighting.shadowBias": -0.0005,
+  "lighting.shadowNormalBias": 0.03,
   "lighting.fillIntensity": 180,
   "lighting.fillDistance": 260,
   "lighting.fillPositionX": 60,

@@ -106,6 +106,8 @@ export class ThreeInspector {
       ['lighting.keyPositionX', 'Основной свет X', -240, 240, 1, 'lighting'],
       ['lighting.keyPositionY', 'Основной свет Y', -240, 360, 1, 'lighting'],
       ['lighting.keyPositionZ', 'Основной свет Z', -240, 360, 1, 'lighting'],
+      ['lighting.shadowBias', 'Смещение тени (Bias)', -0.01, 0.01, 0.0001, 'lighting'],
+      ['lighting.shadowNormalBias', 'Смещение по нормали', 0, 0.2, 0.001, 'lighting'],
       ['lighting.fillIntensity', 'Заполняющий свет', 0, 500, 1, 'lighting'],
       ['lighting.fillDistance', 'Дальность заполняющего', 20, 600, 1, 'lighting'],
       ['lighting.fillPositionX', 'Заполняющий свет X', -240, 240, 1, 'lighting'],
