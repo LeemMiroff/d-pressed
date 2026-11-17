@@ -91,8 +91,6 @@ export class ThreeGame {
     this.upgradeCount = 0;
     this.damage = 1;
     this.platforms = [];
-    this.platformMaterials = [];
-    this.platformTexture = null;
     this.groups = [];
     this.portals = null;
     this.transitionRemaining = 0;
@@ -104,7 +102,6 @@ export class ThreeGame {
     this.createPlayer();
     this.createHub();
     this.createPool();
-    this.loadPlatformTexture();
     this.createEntityPool();
     this.createUi();
     this.resize();
@@ -438,55 +435,10 @@ export class ThreeGame {
     for (const station of this.stations || []) this.updateStationLabel(station);
   }
 
-  createPlatformMaterial(color) {
-    const material = new THREE.MeshStandardMaterial({ color, roughness: 0.72, metalness: 0.08 });
-    this.platformMaterials.push(material);
-    if (this.platformTexture) this.attachPlatformTexture(material, this.platformTexture);
-    return material;
-  }
-
-  attachPlatformTexture(material, texture) {
-    const map = texture.clone();
-    map.needsUpdate = true;
-    material.map = map;
-    material.color.set(0xffffff);
-    material.needsUpdate = true;
-  }
-
-  loadPlatformTexture() {
-    const loader = new THREE.TextureLoader();
-    loader.load('./assets/platform-brick.png', (texture) => {
-      texture.colorSpace = THREE.SRGBColorSpace;
-      texture.wrapS = THREE.RepeatWrapping;
-      texture.wrapT = THREE.RepeatWrapping;
-      texture.magFilter = THREE.NearestFilter;
-      texture.minFilter = THREE.NearestFilter;
-      texture.generateMipmaps = false;
-      texture.anisotropy = 1;
-      texture.needsUpdate = true;
-      this.platformTexture = texture;
-      for (const material of this.platformMaterials) this.attachPlatformTexture(material, texture);
-      this.applyAllViews();
-    }, undefined, (error) => {
-      console.warn('D-PRESSED platform texture failed to load', error);
-    });
-  }
-
-  updatePlatformTextureRepeat(mesh, width, height) {
-    const map = mesh?.material?.map;
-    if (!map) return;
-    const backgroundImageWidth = this.backgroundWallTexture?.image?.width || 256;
-    const platformImageWidth = map.image?.width || 256;
-    const tileSize = (this.config.world.width + 4) * (platformImageWidth / backgroundImageWidth);
-    map.repeat.set(width / tileSize, height / tileSize);
-    map.offset.set(0, 0);
-    map.needsUpdate = true;
-  }
-
   makePlatformMesh(width, height, color = 0xc7a8a4) {
     const mesh = new THREE.Mesh(
       new THREE.BoxGeometry(width, height, 9),
-      this.createPlatformMaterial(color),
+      new THREE.MeshStandardMaterial({ color, roughness: 0.72, metalness: 0.08 }),
     );
     mesh.castShadow = true;
     mesh.receiveShadow = true;
@@ -495,9 +447,10 @@ export class ThreeGame {
 
   createPool() {
     const platformGeometry = new THREE.BoxGeometry(1, this.config.platforms.height, 9);
+    const platformMaterial = new THREE.MeshStandardMaterial({ color: 0xc7a8a4, roughness: 0.72, metalness: 0.08 });
     for (let index = 0; index < this.config.platforms.poolSize; index += 1) {
       const node = new THREE.Group();
-      const mesh = new THREE.Mesh(platformGeometry, this.createPlatformMaterial(0xc7a8a4));
+      const mesh = new THREE.Mesh(platformGeometry, platformMaterial);
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       node.add(mesh);
@@ -696,7 +649,6 @@ export class ThreeGame {
     const renderWidth = platform.width + left + right;
     platform.node.position.set(renderX - left + renderWidth / 2, this.logicalY(renderY + platform.height / 2), 0);
     platform.mesh.scale.set(renderWidth, 1, 1);
-    this.updatePlatformTextureRepeat(platform.mesh, renderWidth, platform.height);
   }
 
   applyHubView() {
@@ -704,7 +656,6 @@ export class ThreeGame {
     const renderWidth = this.hub.width + left + right;
     this.hubMesh.position.x = this.hub.x - left + renderWidth / 2;
     this.hubMesh.scale.set(renderWidth, 1, 1);
-    this.updatePlatformTextureRepeat(this.hubMesh, renderWidth, this.hub.height);
   }
 
   applyHubLandingView(renderY = this.hubLanding.y) {
@@ -712,7 +663,6 @@ export class ThreeGame {
     const renderWidth = this.hubLanding.width + left + right;
     this.hubLandingGroup.position.set(this.hubLanding.x - left + renderWidth / 2, this.logicalY(renderY + this.hubLanding.height / 2), 0);
     this.hubLandingMesh.scale.set(renderWidth / this.hubLanding.width, 1, 1);
-    this.updatePlatformTextureRepeat(this.hubLandingMesh, renderWidth, this.hubLanding.height);
   }
 
   configurePlatform(platform, x, y, width, type = 'SINGLE') {
