@@ -1,6 +1,9 @@
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
 import { CrystalMotion } from './crystal-motion.js';
+import { loadConfig } from './config-store.js';
+import { SeededRandom } from './rng.js';
+import { PlatformGenerator } from './platform-generator.js';
 
 const STEP = 1 / 60;
 const SHADOW_COVERAGE = Object.freeze({
@@ -15,26 +18,6 @@ const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const lerp = (from, to, amount) => from + (to - from) * amount;
 const overlap = (a, b) => a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
 const moveTowards = (current, target, amount) => current < target ? Math.min(current + amount, target) : Math.max(current - amount, target);
-
-function createRunSeed() {
-  if (globalThis.crypto?.getRandomValues) {
-    const values = new Uint32Array(1);
-    globalThis.crypto.getRandomValues(values);
-    return values[0] || 1;
-  }
-  return ((Date.now() ^ Math.floor((globalThis.performance?.now?.() || 0) * 1000)) >>> 0) || 1;
-}
-
-function applySettings(config, saved) {
-  for (const [path, value] of Object.entries(saved || {})) {
-    if (typeof value !== 'number' && typeof value !== 'boolean') continue;
-    const keys = path.split('.');
-    let target = config;
-    for (let index = 0; index < keys.length - 1; index += 1) target = target?.[keys[index]];
-    const key = keys.at(-1);
-    if (target && key in target) target[key] = value;
-  }
-}
 
 function sprite(texture, width, height) {
   const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false });
@@ -84,6 +67,7 @@ export class ThreeGame {
     this.wallSideRepeatCount = 0;
     this.runSeed = 0;
     this.rngState = 0;
+    this.rng = new SeededRandom();
     this.activeRunTime = 0;
     this.nextPortalPattern = config.platforms.hubPortal.everyPatterns;
     this.doublePlatformsDisabled = false;
@@ -100,6 +84,12 @@ export class ThreeGame {
     this.setRandomSeed();
     this.createBackground();
     this.createPlayer();
+    this.platformGenerator = new PlatformGenerator({
+      config: this.config,
+      player: this.player,
+      random: () => this.random(),
+      randomBetween: (min, max) => this.randomBetween(min, max),
+    });
     this.createHub();
     this.createPool();
     this.createEntityPool();
@@ -109,16 +99,15 @@ export class ThreeGame {
   }
 
   setRandomSeed(seed = createRunSeed()) {
-    this.runSeed = (seed >>> 0) || 1;
-    this.rngState = this.runSeed;
+    this.rng.setSeed(seed);
+    this.runSeed = this.rng.seed;
+    this.rngState = this.rng.state;
   }
 
   random() {
-    // Mulberry32 keeps a run varied while making a bug reproducible from its seed.
-    let value = (this.rngState += 0x6D2B79F5);
-    value = Math.imul(value ^ (value >>> 15), value | 1);
-    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
-    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+    const value = this.rng.next();
+    this.rngState = this.rng.state;
+    return value;
   }
 
   randomBetween(min, max) {
@@ -718,55 +707,21 @@ export class ThreeGame {
   }
 
   spawnContent(type) {
-    const rule = this.config.platforms.content[type] || {};
-    if (type === 'DOUBLE') return { enemy: true, crystals: this.random() < 0.6, chest: this.random() < 0.3 };
-    return { enemy: this.random() < (rule.enemyChance || 0), crystals: this.random() < (rule.crystalChance || 0), chest: this.random() < (rule.chestChance || 0) };
+    return this.platformGenerator.spawnContent(type);
   }
 
   choosePattern() {
-    const weights = this.config.platforms.patternWeights || { SINGLE: 1, WALL: 0, DOUBLE: 0 };
-    let candidates = ['SINGLE', 'WALL', 'DOUBLE'].filter((type) => type !== 'DOUBLE' || (this.config.platforms.enablePairedPlatforms && !this.doublePlatformsDisabled));
-    const openingPatterns = this.config.platforms.openingPatterns || [];
-    if (this.patternCount < openingPatterns.length) {
-      const openingType = openingPatterns[this.patternCount];
-      if (candidates.includes(openingType)) return openingType;
-      if (openingType === 'DOUBLE') return 'SINGLE';
-    }
-    if (this.lastPatternType && this.patternRepeatCount >= (this.config.platforms.maxPatternRepeat ?? 2)) candidates = candidates.filter((type) => type !== this.lastPatternType);
-    const transitions = this.config.platforms.patternTransitions || {};
-    if (this.lastPatternType === 'SINGLE' && candidates.includes('SINGLE')) {
-      const changeChance = Number.isFinite(transitions.singleToOtherChance) ? transitions.singleToOtherChance : 0.75;
-      candidates = this.random() < changeChance ? candidates.filter((type) => type !== 'SINGLE') : ['SINGLE'];
-    } else if ((this.lastPatternType === 'WALL' || this.lastPatternType === 'DOUBLE') && candidates.includes('SINGLE')) {
-      const changeChance = Number.isFinite(transitions.wallOrDoubleToSingleChance) ? transitions.wallOrDoubleToSingleChance : 0.9;
-      candidates = this.random() < changeChance ? candidates.filter((type) => type !== this.lastPatternType) : candidates.filter((type) => type === this.lastPatternType);
-    }
-    const diversified = candidates.filter((type) => !this.wouldRepeatPattern(type));
-    if (diversified.length) candidates = diversified;
-    const total = candidates.reduce((sum, type) => sum + Math.max(0, Number(weights[type]) || 0), 0);
-    let roll = this.random() * (total || 1);
-    for (const type of candidates) {
-      roll -= Math.max(0, Number(weights[type]) || 0);
-      if (roll <= 0) return type;
-    }
-    return candidates.at(-1) || 'SINGLE';
+    return this.platformGenerator.choosePattern({
+      patternCount: this.patternCount,
+      patternHistory: this.patternHistory,
+      lastPatternType: this.lastPatternType,
+      patternRepeatCount: this.patternRepeatCount,
+      doublePlatformsDisabled: this.doublePlatformsDisabled,
+    });
   }
 
   wouldRepeatPattern(candidate) {
-    const history = [...this.patternHistory, candidate];
-    const maximumPeriod = Math.min(4, Math.floor(history.length / 2));
-    for (let period = 2; period <= maximumPeriod; period += 1) {
-      let repeats = true;
-      for (let offset = 0; offset < period; offset += 1) {
-        const current = history.length - 1 - offset;
-        if (history[current] !== history[current - period]) {
-          repeats = false;
-          break;
-        }
-      }
-      if (repeats) return true;
-    }
-    return false;
+    return this.platformGenerator.wouldRepeatPattern(this.patternHistory, candidate);
   }
 
   registerPattern(type, count = true) {
@@ -778,101 +733,34 @@ export class ThreeGame {
   }
 
   currentPlatformScale() {
-    const size = this.config.platforms.platformSize || {};
-    const startScale = Number.isFinite(size.startScale) ? size.startScale : 1;
-    const minScale = Number.isFinite(size.minScale) ? size.minScale : 0.55;
-    const duration = Number.isFinite(size.shrinkDurationSeconds) ? size.shrinkDurationSeconds : 0;
-    if (duration > 0) return startScale + (minScale - startScale) * Math.min(1, this.activeRunTime / duration);
-    const shrink = Number.isFinite(size.shrinkPerPattern) ? size.shrinkPerPattern : 0;
-    return Math.max(minScale, startScale - this.patternCount * shrink);
+    return this.platformGenerator.currentPlatformScale(this.activeRunTime, this.patternCount);
   }
 
   randomWidth() {
-    const scale = this.currentPlatformScale();
-    const minimum = Math.max(8, Math.floor(this.config.platforms.minWidth));
-    const maximum = Math.max(minimum, Math.floor(this.config.platforms.maxWidth * scale));
-    return Math.floor(this.randomBetween(minimum, maximum + 1));
+    return this.platformGenerator.randomWidth(this.activeRunTime, this.patternCount);
   }
 
   randomProgressiveWidth() {
-    const scale = this.currentPlatformScale();
-    const minimum = Math.max(this.config.platforms.minWidth, (this.config.platforms.earlySingleMinWidth + (this.config.platforms.minWidth - this.config.platforms.earlySingleMinWidth) * Math.min(1, this.activeRunTime / this.config.platforms.platformProgressionDuration)) * scale);
-    const maximum = Math.max(minimum, (this.config.platforms.earlySingleMaxWidth + (this.config.platforms.maxWidth - this.config.platforms.earlySingleMaxWidth) * Math.min(1, this.activeRunTime / this.config.platforms.platformProgressionDuration)) * scale);
-    return Math.floor(this.randomBetween(minimum, maximum + 1));
+    return this.platformGenerator.randomProgressiveWidth(this.activeRunTime, this.patternCount);
   }
 
   randomPlatformX(width) {
-    const maximumX = this.config.world.width - width;
-    const clearance = Math.max(this.config.platforms.edgeClearance, this.player.width);
-    if (maximumX <= clearance * 2 || this.random() < 0.35) return this.random() < 0.5 ? 0 : maximumX;
-    return Math.floor(this.randomBetween(clearance, maximumX - clearance + 1));
+    return this.platformGenerator.randomPlatformX(width);
   }
 
   randomWallX(width) {
-    let side;
-    if (!this.lastWallSide) { side = this.random() < 0.5 ? 'left' : 'right'; this.wallSideRepeatCount = 1; }
-    else {
-      const sameSideChance = this.wallSideRepeatCount >= 2 ? 0.1 : 0.25;
-      side = this.random() < sameSideChance ? this.lastWallSide : this.lastWallSide === 'left' ? 'right' : 'left';
-      this.wallSideRepeatCount = side === this.lastWallSide ? this.wallSideRepeatCount + 1 : 1;
-    }
-    this.lastWallSide = side;
-    return side === 'left' ? 0 : this.config.world.width - width;
+    const result = this.platformGenerator.randomWallX(width, this.lastWallSide, this.wallSideRepeatCount);
+    this.lastWallSide = result.side;
+    this.wallSideRepeatCount = result.repeatCount;
+    return result.x;
   }
 
   reachableX(previousPlatform, width, gap) {
-    const fallTime = Math.sqrt((2 * gap) / this.config.player.gravity);
-    const maximumReach = this.config.player.maxHorizontalSpeed * fallTime + 8;
-    const previousCenter = previousPlatform.x + previousPlatform.width / 2;
-    const targetCenter = previousCenter + this.randomBetween(-maximumReach, maximumReach);
-    const maximumX = this.config.world.width - width;
-    const candidate = clamp(targetCenter - width / 2, 0, maximumX);
-    const margin = Math.max(this.config.platforms.wallMargin, this.player.width);
-    if (candidate < margin) return 0;
-    if (candidate > maximumX - margin) return maximumX;
-    return candidate;
+    return this.platformGenerator.reachableX(previousPlatform, width, gap);
   }
 
   configureGroupContent(group, type) {
-    if (!group.length) return;
-    const rule = this.config.platforms.content[type] || {};
-    if (type === 'DOUBLE') {
-      const variants = Array.isArray(rule.variants) && rule.variants.length
-        ? rule.variants
-        : [{ weight: 1, enemy: { guaranteed: true, side: 'random' }, oppositeSide: {} }];
-      const total = variants.reduce((sum, variant) => sum + Math.max(0, Number(variant.weight) || 0), 0);
-      let roll = this.random() * (total || 1);
-      let variant = variants[0];
-      for (const candidate of variants) {
-        roll -= Math.max(0, Number(candidate.weight) || 0);
-        if (roll <= 0) {
-          variant = candidate;
-          break;
-        }
-      }
-      const enemySide = variant.enemy?.side === 'left'
-        ? 0
-        : variant.enemy?.side === 'right'
-          ? 1
-          : this.random() < 0.5 ? 0 : 1;
-      const opposite = variant.oppositeSide || {};
-      const chest = this.random() < (Number(opposite.chestChance) || 0);
-      const crystals = !chest && this.random() < (Number(opposite.crystalChanceIfNoChest) || 0);
-      group.forEach((platform, index) => {
-        platform.patternType = type;
-        platform.spawnContent = {
-          enemy: Boolean(variant.enemy?.guaranteed) && index === enemySide,
-          crystals: crystals && index !== enemySide,
-          chest: chest && index !== enemySide,
-        };
-      });
-      return;
-    }
-    const content = this.spawnContent(type);
-    group.forEach((platform) => {
-      platform.patternType = type;
-      platform.spawnContent = { ...content };
-    });
+    return this.platformGenerator.configureGroupContent(group, type);
   }
 
   generateInitial(preserveProgression = false) {
@@ -1767,17 +1655,5 @@ export class ThreeGame {
 }
 
 export async function loadThreeConfig() {
-  const config = structuredClone(CONFIG);
-  let serverSettings = null;
-  try {
-    const response = await fetch(`./settings.json?load=${Date.now()}`, { cache: 'no-store' });
-    if (response.ok) serverSettings = await response.json();
-  } catch { /* try local storage below */ }
-  let localSettings = null;
-  try { localSettings = JSON.parse(localStorage.getItem('d-pressed-inspector-settings') || 'null'); } catch { /* unavailable storage */ }
-  const serverTime = Number(serverSettings?._savedAt) || 0;
-  const localTime = Number(localSettings?._savedAt) || 0;
-  if (serverSettings && (!localSettings || !serverTime || serverTime >= localTime)) applySettings(config, serverSettings);
-  else if (localSettings) applySettings(config, localSettings);
-  return config;
+  return loadConfig(CONFIG);
 }

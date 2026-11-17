@@ -1,5 +1,3 @@
-const randomBetween = (min, max) => min + Math.random() * (max - min);
-
 export class CrystalMotion {
   constructor(game, entity) {
     this.game = game;
@@ -31,12 +29,12 @@ export class CrystalMotion {
     entity.startX = entity.x;
     entity.startY = entity.y;
     const crystals = this.game.config.crystals;
-    const height = randomBetween(crystals.chestJumpMinHeight, crystals.chestJumpMaxHeight)
+    const height = this.game.randomBetween(crystals.chestJumpMinHeight, crystals.chestJumpMaxHeight)
       * (crystals.crystalCollectBounceHeight / 14);
     entity.secondBounceHeight = height * (crystals.burstCoinSecondBounceHeightMultiplier ?? 0.3);
     entity.velocityY = -Math.sqrt(2 * crystals.chestGravity * height);
     const platformCenter = platform ? platform.x + platform.width / 2 : this.game.config.world.width / 2;
-    const direction = Math.sign(platformCenter - entity.x) || (Math.random() < 0.5 ? -1 : 1);
+    const direction = Math.sign(platformCenter - entity.x) || (this.game.random() < 0.5 ? -1 : 1);
     entity.totalOffsetX = direction * crystals.crystalCollectBounceDistance * 0.5;
     entity.firstBounceDistanceShare = crystals.burstCoinFirstBounceDistanceShare ?? 0.7;
     entity.velocityX = 0;
@@ -54,7 +52,7 @@ export class CrystalMotion {
     const centerWeight = (1 - distance) ** curve;
     const jumpMultiplier = (crystals.burstCoinEdgeJumpMultiplier ?? 0.75)
       + ((crystals.burstCoinCenterJumpMultiplier ?? 1.5) - (crystals.burstCoinEdgeJumpMultiplier ?? 0.75)) * centerWeight;
-    const jumpHeight = randomBetween(crystals.chestJumpMinHeight, crystals.chestJumpMaxHeight) * jumpMultiplier;
+    const jumpHeight = this.game.randomBetween(crystals.chestJumpMinHeight, crystals.chestJumpMaxHeight) * jumpMultiplier;
     entity.x = x - entity.width / 2;
     entity.y = floorY;
     entity.floorY = floorY;
