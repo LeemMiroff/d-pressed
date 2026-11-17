@@ -699,7 +699,7 @@ export class ThreeGame {
       entity.renderOffsetX = 0;
       entity.renderOffsetY = 0;
       if (entity.kind === 'enemy') { entity.rotation = 0; entity.view.rotation.z = 0; }
-      if (entity.kind === 'crystal' || entity.kind === 'burst') { entity.rotation = 0; entity.rotationSpeed = 0; }
+      if (entity.kind === 'crystal' || entity.kind === 'burst') { entity.rotation = 0; entity.rotationSpeed = 0; entity.view.rotation.y = 0; }
       entity.dying = false;
       entity.deathVelocityX = 0;
       entity.deathVelocityY = 0;
@@ -1507,6 +1507,7 @@ export class ThreeGame {
       entity.rotation = 0;
       entity.rotationSpeed = (side === 0 ? 1 : -1) * (Number(this.config.crystals.rotationSpeed) || 1.8);
       entity.renderOffsetY = 0;
+      view.rotation.y = 0;
       entity.active = true;
       this.captureEntityRenderState(entity);
       view.visible = true;
@@ -1718,7 +1719,10 @@ export class ThreeGame {
       const platformOffset = entity.kind === 'crystal' ? (entity.platformOffset ?? 0) : 0;
       entity.y = entity.platform.y - platformOffset;
     }
-    if (Number.isFinite(entity.rotation)) entity.view.rotation.z = entity.rotation;
+    if (Number.isFinite(entity.rotation)) {
+      if (entity.kind === 'crystal' || entity.kind === 'burst') entity.view.rotation.y = entity.rotation;
+      else entity.view.rotation.z = entity.rotation;
+    }
     const offsetX = entity.renderOffsetX || 0;
     const offsetY = entity.renderOffsetY || 0;
     const renderLayer = entity.kind === 'crystal' || entity.kind === 'burst' ? (entity.phase === 'counter' ? 4 : 2) : 1;
@@ -1737,7 +1741,8 @@ export class ThreeGame {
     const rotation = lerp(entity.renderPreviousRotation ?? currentRotation, currentRotation, alpha);
     const renderLayer = entity.kind === 'crystal' || entity.kind === 'burst' ? (entity.phase === 'counter' ? 4 : 2) : 1;
     entity.view.position.set(x + (entity.width || 0) / 2 + offsetX, this.logicalY(y - (entity.height || 0) / 2 - offsetY), renderLayer);
-    entity.view.rotation.z = rotation;
+    if (entity.kind === 'crystal' || entity.kind === 'burst') entity.view.rotation.y = rotation;
+    else entity.view.rotation.z = rotation;
     const platformVisible = !entity.platform || entity.platform.node.visible;
     entity.view.visible = entity.active !== false && (!entity.defeated || entity.dying) && platformVisible;
   }

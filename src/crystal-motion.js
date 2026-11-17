@@ -15,6 +15,7 @@ export class CrystalMotion {
     entity.active = false;
     entity.renderOffsetY = 0;
     entity.rotation = 0;
+    if (entity.view) entity.view.rotation.y = 0;
   }
 
   collect() {
@@ -65,6 +66,7 @@ export class CrystalMotion {
     entity.rotation = 0;
     entity.rotationSpeed = (index % 2 === 0 ? 1 : -1) * (crystals.rotationSpeed ?? 1.8);
     entity.renderOffsetY = 0;
+    entity.view.rotation.y = 0;
     entity.bounces = 0;
     entity.elapsed = 0;
     entity.counted = false;
