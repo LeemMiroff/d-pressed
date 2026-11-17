@@ -1189,10 +1189,13 @@ export class ThreeGame {
     this.player.x = clamp(this.player.x + this.player.vx * dt, 0, this.config.world.width - this.player.width);
   }
 
-  applySpeedUpgrade(speed) {
-    if (this.mode !== 'hub') return;
-    const direction = this.input.held ? 1 : -1;
-    this.player.vx = direction * speed;
+  setPlayerHorizontalSpeed(speed, applyVelocity = false) {
+    const nextSpeed = Math.max(0, Number(speed) || 0);
+    this.config.player.maxHorizontalSpeed = nextSpeed;
+    if (applyVelocity) {
+      const direction = this.input.held ? 1 : -1;
+      this.player.vx = direction * nextSpeed;
+    }
   }
 
   updateVertical(dt) {
@@ -1680,8 +1683,7 @@ export class ThreeGame {
     station.level += 1;
     if (station.label === 'SPEED') {
       const nextSpeed = Math.min(upgrades.speedMaximum, this.config.player.maxHorizontalSpeed + upgrades.speedIncrement);
-      this.config.player.maxHorizontalSpeed = nextSpeed;
-      this.applySpeedUpgrade(nextSpeed);
+      this.setPlayerHorizontalSpeed(nextSpeed, true);
     } else {
       this.damage = Math.min(upgrades.damageMaximum, this.damage + upgrades.damageIncrement);
     }
