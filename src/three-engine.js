@@ -10,6 +10,7 @@ const SHADOW_COVERAGE = Object.freeze({
   depthMargin: 12,
   projectionPadding: 4,
 });
+const WALL_EMBED_INSET = 1;
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const lerp = (from, to, amount) => from + (to - from) * amount;
 const overlap = (a, b) => a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
@@ -638,8 +639,8 @@ export class ThreeGame {
     const configuredMaxWidth = Number(this.config.platforms.maxWidth);
     const embedLimit = Number.isFinite(configuredMaxWidth) && configuredMaxWidth > 0 ? configuredMaxWidth : platform.width;
     const embedDepth = Math.max(this.sideWallWidth * 2, Math.min(platform.width, embedLimit));
-    const left = platform.x <= 0.001 ? Math.max(-leftWallOuterEdge, embedDepth) : 0;
-    const right = platform.x + platform.width >= worldWidth - 0.001 ? Math.max(rightWallOuterEdge - worldWidth, embedDepth) : 0;
+    const left = platform.x <= 0.001 ? Math.max(-leftWallOuterEdge, embedDepth) + WALL_EMBED_INSET : 0;
+    const right = platform.x + platform.width >= worldWidth - 0.001 ? Math.max(rightWallOuterEdge - worldWidth, embedDepth) + WALL_EMBED_INSET : 0;
     return { left, right };
   }
 
