@@ -8,6 +8,8 @@ export const CONFIG = Object.freeze({
     height: 8,
     visualWidth: 10,
     visualHeight: 11,
+    visualScale: 1,
+    animationSpeed: 1,
     visualOffsetX: -3,
     visualOffsetY: -7,
     maxHorizontalSpeed: 38,
@@ -22,6 +24,7 @@ export const CONFIG = Object.freeze({
   platforms: {
     poolSize: 12,
     height: 8,
+    depth: 9,
     wallMargin: 10,
     edgeClearance: 5,
     minWidth: 30,

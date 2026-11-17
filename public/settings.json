@@ -14,8 +14,8 @@
   "camera.centerOffset": 8,
   "platforms.enablePairedPlatforms": true,
   "platforms.hubPortal.enabled": true,
-  "_savedAt": 1794897347142,
-  "platforms.hubPortal.everyPatterns": 20,
+  "_savedAt": 1794935962932,
+  "platforms.hubPortal.everyPatterns": 40,
   "platforms.hubPortal.platformWidthRatio": 0.4,
   "lighting.ambientIntensity": 1,
   "lighting.keyIntensity": 4,
@@ -29,5 +29,15 @@
   "lighting.fillPositionZ": 70,
   "lighting.shadowsEnabled": true,
   "lighting.shadowBias": 0.0001,
-  "lighting.shadowNormalBias": 0
+  "lighting.shadowNormalBias": 0,
+  "platforms.worldSpeedIncrease": 0.15,
+  "platforms.maxWorldSpeed": 30,
+  "platforms.targetWorldSpeedTime": 500,
+  "platforms.targetWorldSpeed": 120,
+  "platforms.doublePlatformsDuration": 60,
+  "platforms.platformProgressionDuration": 120,
+  "platforms.increaseWorldSpeed": true,
+  "platforms.useFlowProgression": true,
+  "player.visualScale": 1.5,
+  "player.animationSpeed": 2
 }

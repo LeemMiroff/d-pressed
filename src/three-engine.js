@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import { CONFIG } from './config.js';
 import { CrystalMotion } from './crystal-motion.js';
 import { loadConfig } from './config-store.js';
@@ -61,6 +62,11 @@ export class ThreeGame {
     this.accumulator = 0;
     this.worldHeight = config.world.height;
     this.worldSpeed = config.platforms.initialWorldSpeed;
+    this.playerMixer = null;
+    this.playerRunAction = null;
+    this.playerModel = null;
+    this.playerModelBounds = null;
+    this.playerModelBaseScale = 1;
     this.difficultyTime = 0;
     this.patternCount = 0;
     this.patternHistory = [];
@@ -316,13 +322,102 @@ export class ThreeGame {
 
   createPlayer() {
     this.player = { x: 0, y: 0, width: this.config.player.width, height: this.config.player.height, vx: 0, vy: 0, groundedOn: null, renderPreviousX: 0, renderPreviousY: 0 };
-    this.playerView = new THREE.Mesh(
+    this.playerView = new THREE.Group();
+    this.playerFallbackView = new THREE.Mesh(
       new THREE.BoxGeometry(this.config.player.width, this.config.player.height, 6),
       new THREE.MeshStandardMaterial({ color: 0xff7a45, roughness: 0.4, metalness: 0.1 }),
     );
-    this.playerView.castShadow = true;
-    this.playerView.receiveShadow = true;
+    this.playerFallbackView.castShadow = true;
+    this.playerFallbackView.receiveShadow = true;
+    this.playerView.add(this.playerFallbackView);
     this.world.add(this.playerView);
+    this.loadPlayerModel();
+  }
+
+  loadPlayerModel() {
+    const loader = new FBXLoader();
+    loader.setResourcePath('/assets/mini-chibi-kid/textures/');
+    loader.load(
+      '/assets/mini-chibi-kid/source/mini%20chibi%20kid.fbx',
+      (model) => {
+        const bounds = new THREE.Box3().setFromObject(model);
+        const sourceSize = bounds.getSize(new THREE.Vector3());
+        const targetHeight = Math.max(1, Number(this.config.player.visualHeight) || 11);
+        this.playerModel = model;
+        this.playerModelBounds = bounds.clone();
+        this.playerModelBaseScale = sourceSize.y > 0 ? targetHeight / sourceSize.y : 1;
+        model.traverse((object) => {
+          if (!object.isMesh) return;
+          object.castShadow = true;
+          object.receiveShadow = true;
+        });
+        this.playerView.add(model);
+        this.playerFallbackView.visible = false;
+        const characterTexture = new THREE.TextureLoader().load(
+          '/assets/mini-chibi-kid/textures/base_texture_01.png?character-texture-v2',
+          (texture) => {
+            texture.colorSpace = THREE.SRGBColorSpace;
+            texture.magFilter = THREE.NearestFilter;
+            texture.minFilter = THREE.NearestFilter;
+            texture.generateMipmaps = false;
+            texture.needsUpdate = true;
+            model.traverse((object) => {
+              if (!object.isMesh) return;
+              const materials = Array.isArray(object.material) ? object.material : [object.material];
+              materials.forEach((material) => {
+                if (!material) return;
+                material.map = texture;
+                if (material.color) material.color.set(0xffffff);
+                material.needsUpdate = true;
+              });
+            });
+          },
+          undefined,
+          (error) => console.warn('D-PRESSED character texture failed to load', error),
+        );
+        characterTexture.colorSpace = THREE.SRGBColorSpace;
+        if (model.animations?.length) {
+          const runClip = model.animations.find((clip) => /^run$/i.test(clip.name))
+            || model.animations.find((clip) => /free.?running/i.test(clip.name))
+            || model.animations.find((clip) => /(^|[^a-z])run([^a-z]|$)/i.test(clip.name))
+            || model.animations.find((clip) => /run/i.test(clip.name))
+            || model.animations[0];
+          this.playerMixer = new THREE.AnimationMixer(model);
+          this.playerRunAction = this.playerMixer.clipAction(runClip);
+          this.playerRunAction.play();
+          this.playerMixer.timeScale = Math.max(0.1, Number(this.config.player.animationSpeed) || 1);
+          console.info(`D-PRESSED player animation: ${runClip.name}`);
+        } else {
+          console.warn('D-PRESSED player model loaded without animation clips');
+        }
+        this.applyPlayerVisualSettings();
+        this.applyAllViews();
+      },
+      undefined,
+      (error) => console.warn('D-PRESSED player model failed to load, using fallback cube', error),
+    );
+  }
+
+  applyPlayerVisualSettings() {
+    const visualScale = clamp(Number(this.config.player.visualScale) || 1, 0.5, 2.5);
+    if (this.playerFallbackView) this.playerFallbackView.scale.setScalar(visualScale);
+    if (this.playerModel && this.playerModelBounds) {
+      const scale = this.playerModelBaseScale * visualScale;
+      this.playerModel.scale.setScalar(scale);
+      this.playerModel.position.set(
+        -((this.playerModelBounds.min.x + this.playerModelBounds.max.x) / 2) * scale,
+        -this.player.height / 2 - this.playerModelBounds.min.y * scale,
+        -((this.playerModelBounds.min.z + this.playerModelBounds.max.z) / 2) * scale,
+      );
+      this.updatePlayerFacing();
+    }
+    if (this.playerMixer) this.playerMixer.timeScale = Math.max(0.1, Number(this.config.player.animationSpeed) || 1);
+  }
+
+  updatePlayerFacing() {
+    if (!this.playerModel) return;
+    const direction = Math.sign(this.player.vx) || (this.input.held ? 1 : -1);
+    this.playerModel.rotation.y = direction >= 0 ? Math.PI / 2 : -Math.PI / 2;
   }
 
   createHub() {
@@ -433,7 +528,7 @@ export class ThreeGame {
 
   makePlatformMesh(width, height, color = 0xc7a8a4) {
     const mesh = new THREE.Mesh(
-      new THREE.BoxGeometry(width, height, 9),
+      new THREE.BoxGeometry(width, height, this.config.platforms.depth),
       new THREE.MeshStandardMaterial({ color, roughness: 0.72, metalness: 0.08 }),
     );
     mesh.castShadow = true;
@@ -442,7 +537,7 @@ export class ThreeGame {
   }
 
   createPool() {
-    const platformGeometry = new THREE.BoxGeometry(1, this.config.platforms.height, 9);
+    const platformGeometry = new THREE.BoxGeometry(1, this.config.platforms.height, this.config.platforms.depth);
     const platformMaterial = new THREE.MeshStandardMaterial({ color: 0xc7a8a4, roughness: 0.72, metalness: 0.08 });
     for (let index = 0; index < this.config.platforms.poolSize; index += 1) {
       const node = new THREE.Group();
@@ -472,7 +567,7 @@ export class ThreeGame {
       this.world.add(enemyView, chestView);
       enemyView.visible = false;
       chestView.visible = false;
-      this.entities.push({ kind: 'enemy', view: enemyView, platform: null, x: 0, y: 0, width: 8, height: 8, defeated: false, active: false, health: 3, hitTimer: 0, hitFlightTimer: 0, lastHitDirection: 0, renderOffsetX: 0, renderOffsetY: 0, rotation: 0, renderPreviousX: 0, renderPreviousY: 0, renderPreviousOffsetX: 0, renderPreviousOffsetY: 0, renderPreviousRotation: 0, dying: false, deathVelocityX: 0, deathVelocityY: 0, deathRotation: 0 });
+      this.entities.push({ kind: 'enemy', view: enemyView, platform: null, x: 0, y: 0, width: 8, height: 8, defeated: false, active: false, health: 3, hitTimer: 0, hitFlightTimer: 0, lastHitDirection: 0, renderOffsetX: 0, renderOffsetY: 0, renderOffsetZ: 0, rotation: 0, renderPreviousX: 0, renderPreviousY: 0, renderPreviousOffsetX: 0, renderPreviousOffsetY: 0, renderPreviousOffsetZ: 0, renderPreviousRotation: 0, dying: false, deathVelocityX: 0, deathVelocityY: 0, deathVelocityZ: 0, deathDepthRemaining: 0, deathRotation: 0 });
       this.entities.push({ kind: 'chest', view: chestView, platform: null, x: 0, y: 0, width: 10, height: 8, active: false, opened: false, triggerOnly: true, solid: false, renderPreviousX: 0, renderPreviousY: 0, renderPreviousOffsetX: 0, renderPreviousOffsetY: 0, renderPreviousRotation: 0 });
       for (const side of [0, 1]) {
         const crystalView = new THREE.Mesh(crystalGeometry, crystalMaterial);
@@ -593,6 +688,7 @@ export class ThreeGame {
     entity.renderPreviousY = entity.y;
     entity.renderPreviousOffsetX = entity.renderOffsetX || 0;
     entity.renderPreviousOffsetY = entity.renderOffsetY || 0;
+    entity.renderPreviousOffsetZ = entity.renderOffsetZ || 0;
     entity.renderPreviousRotation = Number.isFinite(entity.rotation) ? entity.rotation : entity.view?.rotation.z || 0;
   }
 
@@ -694,11 +790,15 @@ export class ThreeGame {
       entity.hitFlightTimer = 0;
       entity.renderOffsetX = 0;
       entity.renderOffsetY = 0;
+      entity.renderOffsetZ = 0;
+      entity.renderPreviousOffsetZ = 0;
       if (entity.kind === 'enemy') { entity.rotation = 0; entity.view.rotation.z = 0; }
       if (entity.kind === 'crystal' || entity.kind === 'burst') { entity.rotation = 0; entity.rotationSpeed = 0; entity.view.rotation.y = 0; }
       entity.dying = false;
       entity.deathVelocityX = 0;
       entity.deathVelocityY = 0;
+      entity.deathVelocityZ = 0;
+      entity.deathDepthRemaining = 0;
       entity.deathRotation = 0;
       entity.collecting = false;
       entity.phase = 'idle';
@@ -993,8 +1093,14 @@ export class ThreeGame {
       entity.phase = 'idle';
       entity.bounces = 0;
       entity.platform = null;
+      entity.deathVelocityX = 0;
+      entity.deathVelocityY = 0;
+      entity.deathVelocityZ = 0;
+      entity.deathDepthRemaining = 0;
       entity.renderOffsetX = 0;
       entity.renderOffsetY = 0;
+      entity.renderOffsetZ = 0;
+      entity.renderPreviousOffsetZ = 0;
       if (entity.kind === 'enemy') { entity.rotation = 0; entity.view.rotation.z = 0; }
       if (entity.view) entity.view.visible = false;
     }
@@ -1009,6 +1115,7 @@ export class ThreeGame {
       this.accumulator = 0;
       dt = 0;
     }
+    if (this.playerMixer) this.playerMixer.update(Math.min(dt, 0.1));
     this.accumulator += Math.min(dt, 0.1);
     let steps = 0;
     while (this.accumulator >= STEP && steps < 16) { this.fixedUpdate(STEP); this.accumulator -= STEP; steps += 1; }
@@ -1046,7 +1153,20 @@ export class ThreeGame {
     }
     this.difficultyTime += dt;
     this.activeRunTime += dt;
-    if (this.config.platforms.useFlowProgression) this.worldSpeed = Math.min(this.config.platforms.initialWorldSpeed + ((this.config.platforms.targetWorldSpeed - this.config.platforms.initialWorldSpeed) / this.config.platforms.targetWorldSpeedTime) * this.difficultyTime, this.config.platforms.targetWorldSpeed);
+    const flow = this.config.platforms;
+    if (flow.useFlowProgression) {
+      const initialSpeed = Number(flow.initialWorldSpeed) || 0;
+      const targetSpeed = Number(flow.targetWorldSpeed) || initialSpeed;
+      const duration = Math.max(0.001, Number(flow.targetWorldSpeedTime) || 1);
+      const progressedSpeed = initialSpeed + ((targetSpeed - initialSpeed) / duration) * this.difficultyTime;
+      this.worldSpeed = targetSpeed >= initialSpeed
+        ? Math.min(progressedSpeed, targetSpeed)
+        : Math.max(progressedSpeed, targetSpeed);
+    } else if (flow.increaseWorldSpeed) {
+      const acceleration = Math.max(0, Number(flow.worldSpeedIncrease) || 0);
+      const maximumSpeed = Math.max(Number(flow.initialWorldSpeed) || 0, Number(flow.maxWorldSpeed) || 0);
+      this.worldSpeed = Math.min(this.worldSpeed + acceleration * dt, maximumSpeed);
+    }
     if (!this.doublePlatformsDisabled && this.difficultyTime >= this.config.platforms.doublePlatformsDuration) this.doublePlatformsDisabled = true;
     for (const platform of this.platforms) { if (!platform.active) continue; platform.previousY = platform.y; platform.y -= this.worldSpeed * dt; }
     this.updateBackgroundWall(dt);
@@ -1082,6 +1202,7 @@ export class ThreeGame {
     const turning = this.player.vx !== 0 && Math.sign(this.player.vx) !== direction;
     this.player.vx = moveTowards(this.player.vx, target, (turning ? this.config.player.braking : this.config.player.acceleration) * dt);
     this.player.x = clamp(this.player.x + this.player.vx * dt, 0, this.config.world.width - this.player.width);
+    this.updatePlayerFacing();
   }
 
   setPlayerHorizontalSpeed(speed, applyVelocity = false) {
@@ -1302,12 +1423,16 @@ export class ThreeGame {
     entity.dying = false;
     entity.deathVelocityX = 0;
     entity.deathVelocityY = 0;
+    entity.deathVelocityZ = 0;
+    entity.deathDepthRemaining = 0;
     entity.deathRotation = 0;
     entity.rotation = 0;
     view.rotation.z = 0;
     entity.lastHitDirection = 0;
     entity.renderOffsetX = 0;
     entity.renderOffsetY = 0;
+    entity.renderOffsetZ = 0;
+    entity.renderPreviousOffsetZ = 0;
     this.captureEntityRenderState(entity);
     view.visible = true;
     platform.enemy = entity;
@@ -1331,6 +1456,8 @@ export class ThreeGame {
       enemy.dying = true;
       enemy.deathVelocityX = direction > 0 ? 30 : -30;
       enemy.deathVelocityY = -156;
+      enemy.deathVelocityZ = (Number(this.config.platforms.depth) || 9) / 0.18;
+      enemy.deathDepthRemaining = Number(this.config.platforms.depth) || 9;
       enemy.deathRotation = direction > 0 ? 18 : -18;
       enemy.platform = null;
       this.spawnBurst(enemy.x + enemy.width / 2, enemy.y, 3, deathPlatform);
@@ -1575,8 +1702,9 @@ export class ThreeGame {
     }
     const offsetX = entity.renderOffsetX || 0;
     const offsetY = entity.renderOffsetY || 0;
+    const offsetZ = entity.renderOffsetZ || 0;
     const renderLayer = entity.kind === 'crystal' || entity.kind === 'burst' ? (entity.phase === 'counter' ? 4 : 2) : 1;
-    entity.view.position.set(entity.x + (entity.width || 0) / 2 + offsetX, this.logicalY(entity.y - (entity.height || 0) / 2 - offsetY), renderLayer);
+    entity.view.position.set(entity.x + (entity.width || 0) / 2 + offsetX, this.logicalY(entity.y - (entity.height || 0) / 2 - offsetY), renderLayer + offsetZ);
     const platformVisible = !entity.platform || entity.platform.node.visible;
     entity.view.visible = entity.active !== false && (!entity.defeated || entity.dying) && platformVisible;
   }
@@ -1587,10 +1715,11 @@ export class ThreeGame {
     const y = lerp(entity.renderPreviousY ?? entity.y, entity.y, alpha);
     const offsetX = lerp(entity.renderPreviousOffsetX ?? 0, entity.renderOffsetX || 0, alpha);
     const offsetY = lerp(entity.renderPreviousOffsetY ?? 0, entity.renderOffsetY || 0, alpha);
+    const offsetZ = lerp(entity.renderPreviousOffsetZ ?? 0, entity.renderOffsetZ || 0, alpha);
     const currentRotation = Number.isFinite(entity.rotation) ? entity.rotation : entity.view.rotation.z;
     const rotation = lerp(entity.renderPreviousRotation ?? currentRotation, currentRotation, alpha);
     const renderLayer = entity.kind === 'crystal' || entity.kind === 'burst' ? (entity.phase === 'counter' ? 4 : 2) : 1;
-    entity.view.position.set(x + (entity.width || 0) / 2 + offsetX, this.logicalY(y - (entity.height || 0) / 2 - offsetY), renderLayer);
+    entity.view.position.set(x + (entity.width || 0) / 2 + offsetX, this.logicalY(y - (entity.height || 0) / 2 - offsetY), renderLayer + offsetZ);
     if (entity.kind === 'crystal' || entity.kind === 'burst') entity.view.rotation.y = rotation;
     else entity.view.rotation.z = rotation;
     const platformVisible = !entity.platform || entity.platform.node.visible;

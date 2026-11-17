@@ -12,6 +12,11 @@ export function updateEnemyEntity(game, entity, deltaSeconds) {
   if (entity.dying) {
     entity.deathVelocityY += 440 * deltaSeconds;
     entity.x += entity.deathVelocityX * deltaSeconds;
+    if (entity.deathDepthRemaining > 0) {
+      const depthStep = Math.min(entity.deathVelocityZ * deltaSeconds, entity.deathDepthRemaining);
+      entity.renderOffsetZ += depthStep;
+      entity.deathDepthRemaining -= depthStep;
+    }
     entity.y += entity.deathVelocityY * deltaSeconds;
     entity.rotation += entity.deathRotation * deltaSeconds;
     if (entity.y - entity.height > game.worldHeight + 24) {

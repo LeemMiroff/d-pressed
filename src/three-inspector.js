@@ -1,6 +1,7 @@
 const TAB_DEFINITIONS = [
   ['flow', 'Поток'],
   ['player', 'Игрок'],
+  ['character', 'Персонаж'],
   ['camera', 'Камера'],
   ['lighting', 'Свет'],
   ['presets', 'Пресеты'],
@@ -27,10 +28,16 @@ export class ThreeInspector {
         <section class="inspector__panel is-active" id="inspector-panel-flow" data-panel="flow" role="tabpanel" tabindex="0">
           <label class="inspector__check"><input type="checkbox" data-paired>Двойные платформы</label>
           <label class="inspector__check"><input type="checkbox" data-portals>Порталы в хаб</label>
+          <label class="inspector__check"><input type="checkbox" data-increase-world-speed>Ускорять мир</label>
+          <label class="inspector__check"><input type="checkbox" data-flow-progression>Плавная прогрессия скорости</label>
+          <p class="inspector__hint">При плавной прогрессии используются целевая скорость и время до неё. Ручное ускорение работает, когда прогрессия отключена.</p>
           <div data-controls="flow"></div>
         </section>
         <section class="inspector__panel" id="inspector-panel-player" data-panel="player" role="tabpanel" tabindex="0">
           <div data-controls="player"></div>
+        </section>
+        <section class="inspector__panel" id="inspector-panel-character" data-panel="character" role="tabpanel" tabindex="0">
+          <div data-controls="character"></div>
         </section>
         <section class="inspector__panel" id="inspector-panel-camera" data-panel="camera" role="tabpanel" tabindex="0">
           <div data-controls="camera"></div>
@@ -60,17 +67,46 @@ export class ThreeInspector {
       </div>
     `;
     document.body.append(this.root);
+    this.tooltip = document.createElement('div');
+    this.tooltip.className = 'inspector__tooltip';
+    this.tooltip.hidden = true;
+    document.body.append(this.tooltip);
     this.controls = this.root.querySelector('[data-controls-root]');
     this.telemetry = this.root.querySelector('.inspector__telemetry');
     this.presets = {};
     this.lastTelemetryAt = 0;
     this.pairedInput = this.root.querySelector('[data-paired]');
     this.portalsInput = this.root.querySelector('[data-portals]');
+    this.increaseWorldSpeedInput = this.root.querySelector('[data-increase-world-speed]');
+    this.flowProgressionInput = this.root.querySelector('[data-flow-progression]');
     this.shadowsInput = this.root.querySelector('[data-shadows]');
     this.panels = Object.fromEntries([...this.root.querySelectorAll('[data-panel]')].map((panel) => [panel.dataset.panel, panel]));
 
+    this.bindTooltip(this.pairedInput.closest('.inspector__check'), 'Разрешает генератору создавать две платформы на одной высоте, если это допускает текущая прогрессия.');
+    this.bindTooltip(this.portalsInput.closest('.inspector__check'), 'Включает появление парных порталов, через которые можно вернуться в хаб.');
+    this.bindTooltip(this.increaseWorldSpeedInput.closest('.inspector__check'), 'В ручном режиме постепенно увеличивает скорость подъёма платформ.');
+    this.bindTooltip(this.flowProgressionInput.closest('.inspector__check'), 'Включает плавный переход от начальной скорости к целевой за заданное время. Этот режим имеет приоритет над ручным ускорением.');
+    this.bindTooltip(this.shadowsInput.closest('.inspector__check'), 'Включает или отключает отбрасывание теней объектами сцены.');
+    this.bindTooltip(this.root.querySelector('[data-close]'), 'Закрыть инспектор. Открыть его снова можно клавишей I.');
+    this.bindTooltip(this.root.querySelector('[data-save]'), 'Сохранить текущие значения в настройки игры.');
+    this.bindTooltip(this.root.querySelector('[data-preset-save]'), 'Сохранить текущие значения как новый пресет.');
+    this.bindTooltip(this.root.querySelector('[data-preset-apply]'), 'Применить выбранный пресет и сохранить его значения как текущие настройки.');
+    this.bindTooltip(this.root.querySelector('[data-preset-overwrite]'), 'Перезаписать выбранный пресет текущими значениями инспектора.');
+    const tabDescriptions = {
+      flow: 'Скорость мира, зазоры, размеры платформ и порталы.',
+      player: 'Скорость и физические параметры игрока.',
+      character: 'Масштаб визуальной модели и скорость её анимации.',
+      camera: 'Поле зрения, наклон, дистанция и вертикальный центр камеры.',
+      lighting: 'Интенсивность, положение света и параметры теней.',
+      presets: 'Сохранение, применение и перезапись наборов настроек.',
+      debug: 'Текущий режим игры, скорость потока и счётчики прогрессии.',
+    };
+    this.root.querySelectorAll('[data-tab]').forEach((tab) => this.bindTooltip(tab, tabDescriptions[tab.dataset.tab]));
+
     this.pairedInput.checked = config.platforms.enablePairedPlatforms;
     this.portalsInput.checked = config.platforms.hubPortal.enabled;
+    this.increaseWorldSpeedInput.checked = config.platforms.increaseWorldSpeed;
+    this.flowProgressionInput.checked = config.platforms.useFlowProgression;
     this.shadowsInput.checked = config.lighting?.shadowsEnabled !== false;
     this.pairedInput.addEventListener('change', (event) => {
       config.platforms.enablePairedPlatforms = event.target.checked;
@@ -80,43 +116,62 @@ export class ThreeInspector {
       config.platforms.hubPortal.enabled = event.target.checked;
       game.restart(true, false);
     });
+    this.increaseWorldSpeedInput.addEventListener('change', (event) => {
+      config.platforms.increaseWorldSpeed = event.target.checked;
+      game.restart(true, false);
+    });
+    this.flowProgressionInput.addEventListener('change', (event) => {
+      config.platforms.useFlowProgression = event.target.checked;
+      game.restart(true, false);
+    });
     this.shadowsInput.addEventListener('change', (event) => {
       config.lighting.shadowsEnabled = event.target.checked;
       game.applyLighting();
     });
 
     const definitions = [
-      ['platforms.initialWorldSpeed', 'Начальная скорость', 1, 120, 1, 'flow'],
-      ['platforms.minGap', 'Минимальный зазор', 8, 80, 1, 'flow'],
-      ['platforms.maxGap', 'Максимальный зазор', 8, 100, 1, 'flow'],
-      ['platforms.minWidth', 'Минимальная ширина', 10, 100, 1, 'flow'],
-      ['platforms.maxWidth', 'Максимальная ширина', 10, 110, 1, 'flow'],
-      ['platforms.hubPortal.everyPatterns', 'Портал каждые паттерны', 1, 200, 1, 'flow'],
-      ['platforms.hubPortal.platformWidthRatio', 'Ширина платформ портала', 0.2, 0.49, 0.01, 'flow'],
-      ['player.maxHorizontalSpeed', 'Скорость игрока', 1, 120, 1, 'player'],
-      ['player.acceleration', 'Ускорение', 1, 2000, 1, 'player'],
-      ['player.braking', 'Торможение', 1, 2000, 1, 'player'],
-      ['player.gravity', 'Гравитация', 1, 2000, 1, 'player'],
-      ['camera.fov', 'Камера FOV', 35, 80, 1, 'camera'],
-      ['camera.tiltDegrees', 'Наклон камеры', 0, 35, 1, 'camera'],
-      ['camera.distanceMultiplier', 'Дистанция камеры', 0.7, 1.6, 0.01, 'camera'],
-      ['camera.centerOffset', 'Центр камеры', -40, 40, 1, 'camera'],
-      ['lighting.ambientIntensity', 'Общий свет', 0, 4, 0.05, 'lighting'],
-      ['lighting.keyIntensity', 'Основной свет', 0, 8, 0.05, 'lighting'],
-      ['lighting.keyPositionX', 'Основной свет X', -240, 240, 1, 'lighting'],
-      ['lighting.keyPositionY', 'Основной свет Y', -240, 360, 1, 'lighting'],
-      ['lighting.keyPositionZ', 'Основной свет Z', -240, 360, 1, 'lighting'],
-      ['lighting.shadowBias', 'Смещение тени (Bias)', -0.01, 0.01, 0.0001, 'lighting'],
-      ['lighting.shadowNormalBias', 'Смещение по нормали', 0, 0.2, 0.001, 'lighting'],
-      ['lighting.fillIntensity', 'Заполняющий свет', 0, 500, 1, 'lighting'],
-      ['lighting.fillDistance', 'Дальность заполняющего', 20, 600, 1, 'lighting'],
-      ['lighting.fillPositionX', 'Заполняющий свет X', -240, 240, 1, 'lighting'],
-      ['lighting.fillPositionY', 'Заполняющий свет Y', -240, 360, 1, 'lighting'],
-      ['lighting.fillPositionZ', 'Заполняющий свет Z', -240, 360, 1, 'lighting'],
+      ['platforms.initialWorldSpeed', 'Начальная скорость', 1, 120, 1, 'flow', 'Скорость подъёма платформ в начале забега.'],
+      ['platforms.worldSpeedIncrease', 'Ускорение мира', 0, 10, 0.01, 'flow', 'Сколько мировых единиц в секунду добавляется к скорости в ручном режиме.'],
+      ['platforms.maxWorldSpeed', 'Максимум скорости (ручной режим)', 1, 200, 1, 'flow', 'Предел скорости при ручном ускорении. В режиме плавной прогрессии используется целевая скорость.'],
+      ['platforms.targetWorldSpeedTime', 'Время до целевой скорости', 1, 1800, 1, 'flow', 'За сколько секунд плавная прогрессия доводит мир от начальной до целевой скорости.'],
+      ['platforms.targetWorldSpeed', 'Целевая скорость мира', 1, 200, 1, 'flow', 'Скорость, к которой мир постепенно приходит при включённой плавной прогрессии.'],
+      ['platforms.doublePlatformsDuration', 'Время двойных платформ', 0, 600, 1, 'flow', 'Через сколько секунд после старта забега генератор перестаёт создавать двойные платформы.'],
+      ['platforms.platformProgressionDuration', 'Время прогрессии платформ', 0, 600, 1, 'flow', 'Сколько секунд генератор использует ранние широкие размеры платформ.'],
+      ['platforms.minGap', 'Минимальный зазор', 8, 80, 1, 'flow', 'Минимальное вертикальное расстояние между соседними платформами.'],
+      ['platforms.maxGap', 'Максимальный зазор', 8, 100, 1, 'flow', 'Максимальное вертикальное расстояние между соседними платформами.'],
+      ['platforms.minWidth', 'Минимальная ширина', 10, 100, 1, 'flow', 'Минимальная ширина обычной платформы после начальной прогрессии.'],
+      ['platforms.maxWidth', 'Максимальная ширина', 10, 110, 1, 'flow', 'Максимальная ширина обычной платформы после начальной прогрессии.'],
+      ['platforms.hubPortal.everyPatterns', 'Портал каждые паттерны', 1, 200, 1, 'flow', 'Через сколько сгенерированных паттернов появляется пара порталов в хаб.'],
+      ['platforms.hubPortal.platformWidthRatio', 'Ширина платформ портала', 0.2, 0.49, 0.01, 'flow', 'Доля ширины мира, которую занимает каждая платформа у порталов.'],
+      ['player.maxHorizontalSpeed', 'Скорость игрока', 1, 120, 1, 'player', 'Максимальная горизонтальная скорость игрока.'],
+      ['player.acceleration', 'Ускорение', 1, 2000, 1, 'player', 'Как быстро игрок набирает заданную горизонтальную скорость.'],
+      ['player.braking', 'Торможение', 1, 2000, 1, 'player', 'Как быстро игрок меняет направление и гасит текущую скорость.'],
+      ['player.gravity', 'Гравитация', 1, 2000, 1, 'player', 'Сила падения игрока после прыжка и при отсутствии платформы под ним.'],
+      ['player.visualScale', 'Масштаб персонажа', 0.5, 2.5, 0.01, 'character', 'Размер визуальной модели относительно текущего размера. Hitbox игрока при этом не меняется.'],
+      ['player.animationSpeed', 'Скорость анимации', 0.1, 3, 0.05, 'character', 'Множитель скорости проигрывания анимации бега. На физическую скорость игрока не влияет.'],
+      ['camera.fov', 'Камера FOV', 35, 80, 1, 'camera', 'Угол обзора камеры. Большое значение показывает больше мира и сильнее искажает перспективу.'],
+      ['camera.tiltDegrees', 'Наклон камеры', 0, 35, 1, 'camera', 'Наклон камеры по вертикали относительно плоскости игры.'],
+      ['camera.distanceMultiplier', 'Дистанция камеры', 0.7, 1.6, 0.01, 'camera', 'Масштаб расстояния камеры до игрового мира. Большое значение отдаляет камеру.'],
+      ['camera.centerOffset', 'Центр камеры', -40, 40, 1, 'camera', 'Вертикальное смещение точки, вокруг которой камера показывает мир.'],
+      ['lighting.ambientIntensity', 'Общий свет', 0, 4, 0.05, 'lighting', 'Базовая равномерная подсветка сцены без направленных теней.'],
+      ['lighting.keyIntensity', 'Основной свет', 0, 8, 0.05, 'lighting', 'Интенсивность основного направленного света, который создаёт тени.'],
+      ['lighting.keyPositionX', 'Основной свет X', -240, 240, 1, 'lighting', 'Горизонтальная позиция основного источника света.'],
+      ['lighting.keyPositionY', 'Основной свет Y', -240, 360, 1, 'lighting', 'Вертикальная позиция основного источника света.'],
+      ['lighting.keyPositionZ', 'Основной свет Z', -240, 360, 1, 'lighting', 'Позиция основного света по глубине сцены.'],
+      ['lighting.shadowBias', 'Смещение тени (Bias)', -0.01, 0.01, 0.0001, 'lighting', 'Малое смещение глубины, которое помогает убрать полосы и самозатенение.'],
+      ['lighting.shadowNormalBias', 'Смещение по нормали', 0, 0.2, 0.001, 'lighting', 'Смещение тени вдоль нормали поверхности. Помогает бороться с артефактами на краях.'],
+      ['lighting.fillIntensity', 'Заполняющий свет', 0, 500, 1, 'lighting', 'Интенсивность дополнительного света, который смягчает слишком тёмные стороны.'],
+      ['lighting.fillDistance', 'Дальность заполняющего', 20, 600, 1, 'lighting', 'Расстояние действия дополнительного света.'],
+      ['lighting.fillPositionX', 'Заполняющий свет X', -240, 240, 1, 'lighting', 'Горизонтальная позиция дополнительного света.'],
+      ['lighting.fillPositionY', 'Заполняющий свет Y', -240, 360, 1, 'lighting', 'Вертикальная позиция дополнительного света.'],
+      ['lighting.fillPositionZ', 'Заполняющий свет Z', -240, 360, 1, 'lighting', 'Позиция дополнительного света по глубине сцены.'],
     ];
     definitions.forEach((definition) => this.addControl(...definition));
     this.root.querySelectorAll('[data-tab]').forEach((tab) => tab.addEventListener('click', () => this.activateTab(tab.dataset.tab)));
-    this.root.querySelector('[data-close]').addEventListener('click', () => { this.root.hidden = true; });
+    this.root.querySelector('[data-close]').addEventListener('click', () => {
+      this.root.hidden = true;
+      this.tooltip.hidden = true;
+    });
     this.root.querySelector('[data-save]').addEventListener('click', () => this.save());
     this.root.querySelector('[data-preset-save]').addEventListener('click', () => this.savePreset());
     this.root.querySelector('[data-preset-apply]').addEventListener('click', () => this.applyPreset());
@@ -126,8 +181,10 @@ export class ThreeInspector {
       if (event.code !== 'KeyI' || event.repeat) return;
       event.preventDefault();
       this.root.hidden = !this.root.hidden;
+      if (this.root.hidden) this.tooltip.hidden = true;
       if (!this.root.hidden) this.root.querySelector('.inspector__tab.is-active')?.focus();
     });
+    window.addEventListener('resize', () => { this.tooltip.hidden = true; });
   }
 
   activateTab(tabId) {
@@ -141,6 +198,31 @@ export class ThreeInspector {
     Object.entries(this.panels).forEach(([id, panel]) => panel.classList.toggle('is-active', id === tabId));
   }
 
+  bindTooltip(element, text) {
+    if (!element || !text) return;
+    element.setAttribute('aria-description', text);
+    const show = () => {
+      this.tooltip.textContent = text;
+      this.tooltip.hidden = false;
+      const rect = element.getBoundingClientRect();
+      const margin = 8;
+      const maxWidth = Math.min(280, window.innerWidth - margin * 2);
+      this.tooltip.style.maxWidth = `${maxWidth}px`;
+      let left = rect.left;
+      let top = rect.bottom + margin;
+      const tooltipRect = this.tooltip.getBoundingClientRect();
+      if (left + tooltipRect.width > window.innerWidth - margin) left = window.innerWidth - tooltipRect.width - margin;
+      if (top + tooltipRect.height > window.innerHeight - margin) top = rect.top - tooltipRect.height - margin;
+      this.tooltip.style.left = `${Math.max(margin, left)}px`;
+      this.tooltip.style.top = `${Math.max(margin, top)}px`;
+    };
+    const hide = () => { this.tooltip.hidden = true; };
+    element.addEventListener('pointerenter', show);
+    element.addEventListener('pointerleave', hide);
+    element.addEventListener('focusin', show);
+    element.addEventListener('focusout', hide);
+  }
+
   read(path) { return path.split('.').reduce((value, key) => value?.[key], this.config); }
 
   write(path, value) {
@@ -149,11 +231,12 @@ export class ThreeInspector {
     target[keys.at(-1)] = value;
   }
 
-  addControl(path, label, min, max, step = 1, category = 'flow') {
+  addControl(path, label, min, max, step = 1, category = 'flow', description = '') {
     const row = document.createElement('label');
     row.className = 'inspector__row';
     row.dataset.path = path;
     row.innerHTML = `<span>${label}</span><input type="number" min="${min}" max="${max}" step="${step}" aria-label="${label}"><input type="range" min="${min}" max="${max}" step="${step}" aria-label="${label}">`;
+    this.bindTooltip(row, description);
     const number = row.querySelector('input[type=number]');
     const range = row.querySelector('input[type=range]');
     const update = (source, target) => {
@@ -163,6 +246,10 @@ export class ThreeInspector {
       target.value = value;
       if (path.startsWith('lighting.')) {
         this.game.applyLighting();
+        return;
+      }
+      if (path === 'player.visualScale' || path === 'player.animationSpeed') {
+        this.game.applyPlayerVisualSettings();
         return;
       }
       this.game.resize();
@@ -179,6 +266,8 @@ export class ThreeInspector {
     const payload = Object.fromEntries([...this.root.querySelectorAll('.inspector__row')].map((row) => [row.dataset.path, Number(row.querySelector('input[type=number]').value)]));
     payload['platforms.enablePairedPlatforms'] = this.pairedInput.checked;
     payload['platforms.hubPortal.enabled'] = this.portalsInput.checked;
+    payload['platforms.increaseWorldSpeed'] = this.increaseWorldSpeedInput.checked;
+    payload['platforms.useFlowProgression'] = this.flowProgressionInput.checked;
     payload['lighting.shadowsEnabled'] = this.shadowsInput.checked;
     return payload;
   }
@@ -272,11 +361,20 @@ export class ThreeInspector {
       this.config.platforms.hubPortal.enabled = values['platforms.hubPortal.enabled'];
       this.portalsInput.checked = values['platforms.hubPortal.enabled'];
     }
+    if (typeof values['platforms.increaseWorldSpeed'] === 'boolean') {
+      this.config.platforms.increaseWorldSpeed = values['platforms.increaseWorldSpeed'];
+      this.increaseWorldSpeedInput.checked = values['platforms.increaseWorldSpeed'];
+    }
+    if (typeof values['platforms.useFlowProgression'] === 'boolean') {
+      this.config.platforms.useFlowProgression = values['platforms.useFlowProgression'];
+      this.flowProgressionInput.checked = values['platforms.useFlowProgression'];
+    }
     if (typeof values['lighting.shadowsEnabled'] === 'boolean') {
       this.config.lighting.shadowsEnabled = values['lighting.shadowsEnabled'];
       this.shadowsInput.checked = values['lighting.shadowsEnabled'];
     }
     this.game.applyLighting();
+    this.game.applyPlayerVisualSettings();
     this.game.resize();
     this.game.restart(true, false);
   }
