@@ -354,32 +354,84 @@ export class ThreeGame {
     head.receiveShadow = true;
     body.position.set(localX, 6, 1);
     head.position.set(localX, 10, 1);
-    node.add(body, head, this.makeStationLabel(label, color));
-    return { label, localX, node, passes: 0, passWindow: 0, firstDirection: 0, previousCenter: null, level: 0 };
+    const station = {
+      label,
+      localX,
+      node,
+      passes: 0,
+      passWindow: 0,
+      firstDirection: 0,
+      previousCenter: null,
+      level: 0,
+      labelView: this.makeStationLabel(label, color),
+    };
+    station.labelView.sprite.position.set(localX, 26, 2);
+    node.add(body, head, station.labelView.sprite);
+    this.updateStationLabel(station);
+    return station;
   }
 
   makeStationLabel(label, color) {
     const canvas = document.createElement('canvas');
     canvas.width = 256;
-    canvas.height = 96;
+    canvas.height = 144;
     const context = canvas.getContext('2d');
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    const labelTexture = new THREE.CanvasTexture(canvas);
+    labelTexture.colorSpace = THREE.SRGBColorSpace;
+    labelTexture.magFilter = THREE.NearestFilter;
+    labelTexture.minFilter = THREE.NearestFilter;
+    const labelSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: labelTexture, transparent: true, depthTest: false }));
+    labelSprite.scale.set(22, 12, 1);
+    return { label, color, canvas, context, texture: labelTexture, sprite: labelSprite, state: '' };
+  }
+
+  getUpgradeCost() {
+    const upgrades = this.config.upgrades;
+    return Math.round(upgrades.firstCost * (upgrades.costMultiplier ** this.upgradeCount));
+  }
+
+  getStationValue(station) {
+    return station.label === 'SPEED' ? this.config.player.maxHorizontalSpeed : this.damage;
+  }
+
+  updateStationLabel(station) {
+    if (!station?.labelView) return;
+    const upgrades = this.config.upgrades;
+    const current = this.getStationValue(station);
+    const maximum = station.label === 'SPEED' ? upgrades.speedMaximum : upgrades.damageMaximum;
+    const increment = station.label === 'SPEED' ? upgrades.speedIncrement : upgrades.damageIncrement;
+    const isMaxed = current >= maximum;
+    const cost = this.getUpgradeCost();
+    const hasEnough = this.crystalCount >= cost;
+    const state = `${current}|${maximum}|${increment}|${cost}|${isMaxed}|${hasEnough}`;
+    if (station.labelView.state === state) return;
+    station.labelView.state = state;
+
+    const { context, canvas, color, texture } = station.labelView;
+    context.clearRect(0, 0, canvas.width, canvas.height);
     context.fillStyle = '#17171d';
     context.fillRect(0, 0, canvas.width, canvas.height);
     context.strokeStyle = `#${color.toString(16).padStart(6, '0')}`;
     context.lineWidth = 5;
     context.strokeRect(3, 3, canvas.width - 6, canvas.height - 6);
-    context.fillStyle = '#ffffff';
-    context.font = 'bold 30px monospace';
-    context.textAlign = 'center';
-    context.fillText(label, canvas.width / 2, 40);
+
+    context.font = 'bold 27px monospace';
+    context.fillStyle = `#${color.toString(16).padStart(6, '0')}`;
+    context.fillText(station.label, canvas.width / 2, 20);
     context.font = 'bold 22px monospace';
-    context.fillText(label === 'SPEED' ? '+5 SPEED' : '+1 DAMAGE', canvas.width / 2, 72);
-    const labelTexture = new THREE.CanvasTexture(canvas);
-    labelTexture.colorSpace = THREE.SRGBColorSpace;
-    const labelSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: labelTexture, transparent: true, depthTest: false }));
-    labelSprite.scale.set(22, 8, 1);
-    labelSprite.position.set(label === 'SPEED' ? 24 : 62, 25, 2);
-    return labelSprite;
+    context.fillStyle = '#ffffff';
+    context.fillText(isMaxed ? `${current}  MAX` : `${current} / ${maximum}`, canvas.width / 2, 54);
+    context.fillStyle = isMaxed || hasEnough ? '#ffffff' : '#ff6b6b';
+    context.fillText(isMaxed ? 'MAXED' : `COST ${cost} CR`, canvas.width / 2, 88);
+    context.fillStyle = '#c7a8a4';
+    if (!isMaxed) context.fillText(`NEXT +${increment}`, canvas.width / 2, 122);
+    texture.needsUpdate = true;
+  }
+
+  updateStationLabels() {
+    for (const station of this.stations || []) this.updateStationLabel(station);
   }
 
   makePlatformMesh(width, height, color = 0xc7a8a4) {
@@ -1135,6 +1187,11 @@ export class ThreeGame {
     this.player.x = clamp(this.player.x + this.player.vx * dt, 0, this.config.world.width - this.player.width);
   }
 
+  applySpeedUpgrade(speed) {
+    const direction = Math.sign(this.player.vx) || (this.input.held ? 1 : -1);
+    this.player.vx = direction * speed;
+  }
+
   updateVertical(dt) {
     const grounded = this.player.groundedOn;
     if (grounded?.active === false) this.player.groundedOn = null;
@@ -1530,30 +1587,70 @@ export class ThreeGame {
   }
 
   updateStations(dt) {
+    this.updateStationLabels();
     for (const station of this.stations) {
       station.passWindow = Math.max(0, station.passWindow - dt);
       const center = this.player.x + this.player.width / 2;
       if (Math.abs(this.player.y + this.player.height - this.hub.y) > 8) continue;
       if (station.previousCenter === null) { station.previousCenter = center; continue; }
       const crossed = (station.previousCenter - station.localX) * (center - station.localX) <= 0 && station.previousCenter !== center;
-      if (crossed) { const direction = Math.sign(center - station.previousCenter); const expected = station.passes % 2 === 0 ? station.firstDirection : -station.firstDirection; if (!station.firstDirection || station.passWindow === 0 || station.passes === 0 || direction !== expected) { station.firstDirection = direction; station.passes = 1; } else station.passes += 1; station.passWindow = this.config.upgrades.passWindowSeconds; if (station.passes >= this.config.upgrades.requiredPasses) { this.activateStation(station); station.passes = 0; station.firstDirection = 0; } }
+      if (!crossed) {
+        station.previousCenter = center;
+        continue;
+      }
+
+      const direction = Math.sign(center - station.previousCenter);
+      if (!station.firstDirection || station.passWindow === 0 || station.passes === 0) {
+        station.firstDirection = direction;
+        station.passes = 1;
+      } else {
+        const expectedDirection = station.passes % 2 === 0
+          ? station.firstDirection
+          : -station.firstDirection;
+        if (direction !== expectedDirection) {
+          station.firstDirection = direction;
+          station.passes = 1;
+        } else {
+          station.passes += 1;
+        }
+      }
+      station.passWindow = this.config.upgrades.passWindowSeconds;
+      if (station.passes >= this.config.upgrades.requiredPasses) {
+        this.activateStation(station);
+        station.passes = 0;
+        station.firstDirection = 0;
+        station.passWindow = 0;
+      }
       station.previousCenter = center;
     }
   }
 
   activateStation(station) {
     const upgrades = this.config.upgrades;
-    const cost = Math.round(upgrades.firstCost * (upgrades.costMultiplier ** this.upgradeCount));
-    if (this.crystalCount < cost) return;
+    const current = this.getStationValue(station);
+    const maximum = station.label === 'SPEED' ? upgrades.speedMaximum : upgrades.damageMaximum;
+    if (current >= maximum) return false;
+    const cost = this.getUpgradeCost();
+    if (this.crystalCount < cost) return false;
     this.crystalCount -= cost;
     this.upgradeCount += 1;
     station.level += 1;
-    if (station.label === 'SPEED') this.config.player.maxHorizontalSpeed = Math.min(upgrades.speedMaximum, this.config.player.maxHorizontalSpeed + upgrades.speedIncrement);
-    else this.damage = Math.min(upgrades.damageMaximum, this.damage + upgrades.damageIncrement);
+    if (station.label === 'SPEED') {
+      const nextSpeed = Math.min(upgrades.speedMaximum, this.config.player.maxHorizontalSpeed + upgrades.speedIncrement);
+      this.config.player.maxHorizontalSpeed = nextSpeed;
+      this.applySpeedUpgrade(nextSpeed);
+    } else {
+      this.damage = Math.min(upgrades.damageMaximum, this.damage + upgrades.damageIncrement);
+    }
+    this.updateCounter();
+    return true;
   }
 
   setGameOver() { this.gameOver = true; this.mode = 'game-over'; this.gameOverPanel.hidden = false; this.input.held = false; }
-  updateCounter() { this.counter.textContent = String(this.crystalCount); }
+  updateCounter() {
+    this.counter.textContent = String(this.crystalCount);
+    this.updateStationLabels();
+  }
   updateRenderStats() {
     const now = performance.now();
     this.renderStats.frames += 1;
