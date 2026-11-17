@@ -10,7 +10,6 @@
     "test": "node --test"
   },
   "dependencies": {
-    "pixi.js": "^8.14.0",
     "three": "^0.187.0"
   },
   "devDependencies": {

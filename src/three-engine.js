@@ -4,6 +4,8 @@ import { CrystalMotion } from './crystal-motion.js';
 import { loadConfig } from './config-store.js';
 import { SeededRandom } from './rng.js';
 import { PlatformGenerator } from './platform-generator.js';
+import { GAME_STATES, GameSession } from './game-session.js';
+import { updateCollectibleEntity, updateEnemyEntity } from './entity-systems.js';
 
 const STEP = 1 / 60;
 const SHADOW_COVERAGE = Object.freeze({
@@ -52,7 +54,8 @@ export class ThreeGame {
     this.keyLight.shadow.mapSize.set(1024, 1024);
     this.applyLighting();
     this.input = { held: false };
-    this.mode = 'hub';
+    this.session = new GameSession();
+    this.mode = this.session.state;
     this.paused = false;
     this.gameOver = false;
     this.accumulator = 0;
@@ -112,6 +115,10 @@ export class ThreeGame {
 
   randomBetween(min, max) {
     return min + this.random() * (max - min);
+  }
+
+  setMode(nextState) {
+    this.mode = this.session.transition(nextState);
   }
 
   updateShadowCameraCoverage(worldHeight) {
@@ -846,7 +853,7 @@ export class ThreeGame {
     }
     this.gameOver = false;
     this.gameOverPanel.hidden = true;
-    this.mode = 'run';
+    this.setMode(GAME_STATES.RUN);
     this.rebuildRoute(preserveProgression);
     const start = this.platforms[this.config.player.startPlatformIndex];
     this.player.groundedOn = start;
@@ -864,7 +871,7 @@ export class ThreeGame {
     this.player.groundedOn = null;
     this.player.vx = 0;
     this.player.vy = 0;
-    this.mode = 'run';
+    this.setMode(GAME_STATES.RUN);
     this.hubMoving = false;
     this.hubGroup.visible = false;
     this.hub.y = this.hubTopY();
@@ -878,7 +885,7 @@ export class ThreeGame {
   }
 
   enterHub() {
-    this.mode = 'hub';
+    this.setMode(GAME_STATES.HUB);
     this.hubGroup.visible = true;
     this.hubLandingGroup.visible = true;
     this.hub.y = this.hubTopY();
@@ -966,7 +973,7 @@ export class ThreeGame {
   }
 
   exitHub() {
-    this.mode = 'run';
+    this.setMode(GAME_STATES.RUN);
     this.hubMoving = true;
     this.hubLandingGroup.visible = true;
     for (const platform of this.platforms) platform.node.visible = platform.active;
@@ -1252,58 +1259,10 @@ export class ThreeGame {
       if (platform.spawnContent.crystals && !platform.crystalsSpawned) this.spawnCrystals(platform);
       if (platform.spawnContent.chest && !platform.chest) this.spawnChest(platform);
     }
-    let collectedCrystalThisFrame = false;
+    const entityUpdateState = { collectedCrystalThisFrame: false };
     for (const entity of this.entities) {
-      if (entity.kind === 'enemy' && entity.active && !entity.dying && !entity.defeated && !entity.platform) {
-        // An enemy can outlive its pooled platform for one frame during a
-        // recycle or route rebuild. Do not let that stale object enter combat.
-        entity.active = false;
-        entity.view.visible = false;
-        continue;
-      }
-      if (entity.kind === 'enemy' && entity.dying) {
-        entity.deathVelocityY += 440 * dt;
-        entity.x += entity.deathVelocityX * dt;
-        entity.y += entity.deathVelocityY * dt;
-        entity.rotation += entity.deathRotation * dt;
-        if (entity.y - entity.height > this.worldHeight + 24) {
-          entity.dying = false;
-          entity.active = false;
-          entity.platform = null;
-          entity.view.visible = false;
-        }
-      } else if (entity.kind === 'enemy' && !entity.defeated) {
-        const wasHitFlight = entity.hitFlightTimer > 0;
-        entity.hitTimer = Math.max(0, entity.hitTimer - dt);
-        entity.hitFlightTimer = Math.max(0, entity.hitFlightTimer - dt);
-        if (entity.hitFlightTimer > 0) {
-          const progress = 1 - entity.hitFlightTimer / 0.18;
-          entity.renderOffsetX = entity.hitFlightOffsetX * progress;
-          entity.renderOffsetY = 4 * 4 * progress * (1 - progress);
-        } else {
-          if (wasHitFlight && entity.hitFlightOffsetX && entity.platform) {
-            const minX = entity.platform.x + 1;
-            const maxX = entity.platform.x + entity.platform.width - entity.width - 1;
-            entity.x = clamp(entity.x + entity.hitFlightOffsetX, minX, Math.max(minX, maxX));
-          }
-          entity.renderOffsetX = 0;
-          entity.renderOffsetY = 0;
-        }
-        if (entity.hitTimer === 0 && entity.hitFlightTimer === 0 && overlap(this.player, { x: entity.x, y: entity.y - entity.height, width: entity.width, height: entity.height })) {
-          const stomp = this.player.vy > 0 && this.player.y + this.player.height <= entity.y + 2;
-          this.hitEnemy(entity, stomp);
-        }
-        if ((entity.hitTimer > 0 || entity.hitFlightTimer > 0) && entity.view.material?.emissive) entity.view.material.emissive.setHex(0xffd66b);
-        else if (entity.view.material?.emissive) entity.view.material.emissive.setHex(0x000000);
-      }
-      if (!collectedCrystalThisFrame && entity.kind === 'crystal' && entity.active && !entity.collecting && overlap(this.player, { x: entity.x, y: entity.y - entity.height, width: entity.width, height: entity.height })) {
-        entity.motion.collect();
-        collectedCrystalThisFrame = true;
-      }
-      if (entity.kind === 'crystal' && entity.collecting) entity.motion.update(dt);
-      if (entity.kind === 'chest' && entity.active && overlap(this.player, { x: entity.x, y: entity.y - entity.height, width: entity.width, height: entity.height })) { entity.active = false; entity.view.visible = false; this.spawnBurst(entity.x + entity.width / 2, entity.y, this.config.crystals.chestCoinCount, entity.platform); }
-      if (entity.kind === 'burst' && entity.active) entity.motion.update(dt);
-      this.updateCrystalAnimation(entity, dt);
+      if (entity.kind === 'enemy') updateEnemyEntity(this, entity, dt);
+      else updateCollectibleEntity(this, entity, dt, entityUpdateState);
       this.applyEntityView(entity);
     }
     this.updateCounter();
@@ -1501,7 +1460,7 @@ export class ThreeGame {
     const entered = this.portals.some((portal) => overlap(this.player, { x: portal.platform.x + (portal.side ? portal.platform.width - 4 : 0), y: portal.platform.y - 10, width: 4, height: 10 }));
     if (entered) {
       this.clearPortals();
-      this.mode = 'transition';
+      this.setMode(GAME_STATES.TRANSITION);
       this.input.held = false;
       this.transitionRemaining = 0.25;
     }
@@ -1579,7 +1538,7 @@ export class ThreeGame {
     return true;
   }
 
-  setGameOver() { this.gameOver = true; this.mode = 'game-over'; this.gameOverPanel.hidden = false; this.input.held = false; }
+  setGameOver() { this.gameOver = true; this.setMode(GAME_STATES.GAME_OVER); this.gameOverPanel.hidden = false; this.input.held = false; }
   updateCounter() {
     this.counter.textContent = String(this.crystalCount);
     this.updateStationLabels();
