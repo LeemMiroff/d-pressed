@@ -336,9 +336,9 @@ export class ThreeGame {
 
   loadPlayerModel() {
     const loader = new FBXLoader();
-    loader.setResourcePath('/assets/mini-chibi-kid/textures/');
+    loader.setResourcePath('./assets/mini-chibi-kid/textures/');
     loader.load(
-      '/assets/mini-chibi-kid/source/mini%20chibi%20kid.fbx',
+      './assets/mini-chibi-kid/source/mini%20chibi%20kid.fbx',
       (model) => {
         const bounds = new THREE.Box3().setFromObject(model);
         const sourceSize = bounds.getSize(new THREE.Vector3());
@@ -354,7 +354,7 @@ export class ThreeGame {
         this.playerView.add(model);
         this.playerFallbackView.visible = false;
         const characterTexture = new THREE.TextureLoader().load(
-          '/assets/mini-chibi-kid/textures/base_texture_01.png?character-texture-v2',
+          './assets/mini-chibi-kid/textures/base_texture_01.png?character-texture-v2',
           (texture) => {
             texture.colorSpace = THREE.SRGBColorSpace;
             texture.magFilter = THREE.NearestFilter;
