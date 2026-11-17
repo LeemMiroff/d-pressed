@@ -1157,7 +1157,7 @@ export class ThreeGame {
       this.hub.y -= this.worldSpeed * dt;
       this.hubLanding.previousY = this.hubLanding.y;
       this.hubLanding.y -= this.worldSpeed * dt;
-      const offscreenMargin = Math.max(this.config.platforms.height * 2, 16);
+      const offscreenMargin = this.getPlatformOffscreenMargin();
       if (this.hub.y + this.hub.height < -offscreenMargin) {
         this.hubGroup.visible = false;
       }
@@ -1227,10 +1227,21 @@ export class ThreeGame {
 
   isOnPlatform(platform) { return this.player.x + this.player.width > platform.x && this.player.x < platform.x + platform.width; }
 
+  getPlatformOffscreenMargin() {
+    const platformHeight = Math.max(0, Number(this.config.platforms.height) || 0);
+    const segmentGap = Math.max(
+      0,
+      Number(this.config.platforms.maxGap) || Number(this.config.platforms.minGap) || 0,
+    );
+    // Keep a platform alive for one full inter-platform gap after it clears
+    // the visible area so its cast shadow can leave the screen naturally.
+    return Math.max(platformHeight * 2, platformHeight + segmentGap);
+  }
+
   isGroupOffscreen(group) {
     return Boolean(group?.length)
       && !group.isPortalPair
-      && group.every((platform) => platform.active && platform.y + platform.height < -this.config.platforms.height);
+      && group.every((platform) => platform.active && platform.y + platform.height < -this.getPlatformOffscreenMargin());
   }
 
   findLowestPlatform(excludedGroups = new Set()) {
