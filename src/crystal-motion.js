@@ -13,6 +13,8 @@ export class CrystalMotion {
     entity.bounces = 0;
     entity.platform = null;
     entity.active = false;
+    entity.renderOffsetY = 0;
+    entity.rotation = 0;
   }
 
   collect() {
@@ -60,6 +62,9 @@ export class CrystalMotion {
     entity.velocityY = -Math.sqrt(2 * crystals.chestGravity * jumpHeight);
     entity.secondBounceHeight = jumpHeight * (crystals.burstCoinSecondBounceHeightMultiplier ?? 0.3);
     entity.phase = 'burst';
+    entity.rotation = 0;
+    entity.rotationSpeed = (index % 2 === 0 ? 1 : -1) * (crystals.rotationSpeed ?? 1.8);
+    entity.renderOffsetY = 0;
     entity.bounces = 0;
     entity.elapsed = 0;
     entity.counted = false;
@@ -77,7 +82,8 @@ export class CrystalMotion {
     if (entity.platform && (entity.kind === 'burst' || entity.collecting)) {
       const platformDelta = entity.platform.y - entity.platform.previousY;
       entity.y += platformDelta;
-      entity.floorY = entity.platform.y;
+      const platformOffset = entity.kind === 'crystal' ? (entity.platformOffset ?? 0) : 0;
+      entity.floorY = entity.platform.y - platformOffset;
     }
     if (entity.phase === 'counter') {
       entity.elapsed += deltaSeconds;

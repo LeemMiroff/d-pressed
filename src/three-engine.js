@@ -485,7 +485,7 @@ export class ThreeGame {
         crystalView.receiveShadow = true;
         crystalView.visible = false;
         crystalView.position.z = 2;
-        const crystal = { kind: 'crystal', view: crystalView, platform: null, x: 0, y: 0, width: 6, height: 6, active: false, collecting: false, phase: 'idle', floorY: 0, velocityX: 0, velocityY: 0, elapsed: 0, startX: 0, startY: 0, renderPreviousX: 0, renderPreviousY: 0, renderPreviousOffsetX: 0, renderPreviousOffsetY: 0, renderPreviousRotation: 0 };
+        const crystal = { kind: 'crystal', view: crystalView, platform: null, x: 0, y: 0, width: 6, height: 6, active: false, collecting: false, phase: 'idle', floorY: 0, velocityX: 0, velocityY: 0, elapsed: 0, startX: 0, startY: 0, platformOffset: this.config.crystals.platformOffset ?? 1, bobPhase: side * Math.PI, rotationSpeed: 0, rotation: 0, renderOffsetX: 0, renderOffsetY: 0, renderPreviousX: 0, renderPreviousY: 0, renderPreviousOffsetX: 0, renderPreviousOffsetY: 0, renderPreviousRotation: 0 };
         crystal.motion = new CrystalMotion(this, crystal);
         this.entities.push(crystal);
       }
@@ -496,7 +496,7 @@ export class ThreeGame {
       view.castShadow = true;
       view.receiveShadow = true;
       view.visible = false;
-      const burst = { kind: 'burst', view, platform: null, x: 0, y: 0, width: 6, height: 6, active: false, phase: 'burst', floorY: 0, velocityX: 0, velocityY: 0, bounces: 0, elapsed: 0, startX: 0, startY: 0, counted: false, renderPreviousX: 0, renderPreviousY: 0, renderPreviousOffsetX: 0, renderPreviousOffsetY: 0, renderPreviousRotation: 0 };
+      const burst = { kind: 'burst', view, platform: null, x: 0, y: 0, width: 6, height: 6, active: false, phase: 'burst', floorY: 0, velocityX: 0, velocityY: 0, bounces: 0, elapsed: 0, startX: 0, startY: 0, counted: false, rotation: 0, rotationSpeed: 0, renderPreviousX: 0, renderPreviousY: 0, renderPreviousOffsetX: 0, renderPreviousOffsetY: 0, renderPreviousRotation: 0 };
       burst.motion = new CrystalMotion(this, burst);
       this.entities.push(burst);
     }
@@ -699,6 +699,7 @@ export class ThreeGame {
       entity.renderOffsetX = 0;
       entity.renderOffsetY = 0;
       if (entity.kind === 'enemy') { entity.rotation = 0; entity.view.rotation.z = 0; }
+      if (entity.kind === 'crystal' || entity.kind === 'burst') { entity.rotation = 0; entity.rotationSpeed = 0; }
       entity.dying = false;
       entity.deathVelocityX = 0;
       entity.deathVelocityY = 0;
@@ -1410,9 +1411,28 @@ export class ThreeGame {
       if (entity.kind === 'crystal' && entity.collecting) entity.motion.update(dt);
       if (entity.kind === 'chest' && entity.active && overlap(this.player, { x: entity.x, y: entity.y - entity.height, width: entity.width, height: entity.height })) { entity.active = false; entity.view.visible = false; this.spawnBurst(entity.x + entity.width / 2, entity.y, this.config.crystals.chestCoinCount, entity.platform); }
       if (entity.kind === 'burst' && entity.active) entity.motion.update(dt);
+      this.updateCrystalAnimation(entity, dt);
       this.applyEntityView(entity);
     }
     this.updateCounter();
+  }
+
+  updateCrystalAnimation(entity, dt) {
+    if (!entity.active || (entity.kind !== 'crystal' && entity.kind !== 'burst')) return;
+    const crystals = this.config.crystals;
+    const rotationSpeed = Number.isFinite(entity.rotationSpeed)
+      ? entity.rotationSpeed
+      : Number(crystals.rotationSpeed) || 1.8;
+    entity.rotation = (entity.rotation || 0) + rotationSpeed * dt;
+    if (entity.kind !== 'crystal' || entity.collecting || !entity.platform) {
+      entity.renderOffsetY = 0;
+      return;
+    }
+    const bobSpeed = Math.max(0, Number(crystals.idleBobSpeed) || 0);
+    const bobHeight = Math.max(0, Number(crystals.idleBobHeight) || 0);
+    entity.bobPhase = (entity.bobPhase || 0) + bobSpeed * dt;
+    // The lowest visual point stays at the configured platform offset.
+    entity.renderOffsetY = bobHeight * (0.5 + 0.5 * Math.sin(entity.bobPhase));
   }
 
   spawnEnemy(platform) {
@@ -1475,9 +1495,18 @@ export class ThreeGame {
     for (const side of [0, 1]) {
       const entity = available[side];
       const view = entity.view;
+      const platformOffset = Number(this.config.crystals.platformOffset);
       entity.platform = platform;
       entity.x = side === 0 ? platform.x + 3 : platform.x + platform.width - 9;
-      entity.y = platform.y - 1;
+      entity.platformOffset = Number.isFinite(platformOffset) ? Math.max(0, platformOffset) : 1;
+      entity.y = platform.y - entity.platformOffset;
+      entity.floorY = entity.y;
+      entity.phase = 'idle';
+      entity.collecting = false;
+      entity.bobPhase = side * Math.PI;
+      entity.rotation = 0;
+      entity.rotationSpeed = (side === 0 ? 1 : -1) * (Number(this.config.crystals.rotationSpeed) || 1.8);
+      entity.renderOffsetY = 0;
       entity.active = true;
       this.captureEntityRenderState(entity);
       view.visible = true;
@@ -1685,7 +1714,10 @@ export class ThreeGame {
   }
   applyEntityView(entity) {
     if (!entity.view) return;
-    if (entity.platform && entity.kind !== 'burst' && !entity.collecting) entity.y = entity.platform.y;
+    if (entity.platform && entity.kind !== 'burst' && !entity.collecting) {
+      const platformOffset = entity.kind === 'crystal' ? (entity.platformOffset ?? 0) : 0;
+      entity.y = entity.platform.y - platformOffset;
+    }
     if (Number.isFinite(entity.rotation)) entity.view.rotation.z = entity.rotation;
     const offsetX = entity.renderOffsetX || 0;
     const offsetY = entity.renderOffsetY || 0;
