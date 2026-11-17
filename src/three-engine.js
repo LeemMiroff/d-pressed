@@ -1190,7 +1190,8 @@ export class ThreeGame {
   }
 
   applySpeedUpgrade(speed) {
-    const direction = Math.sign(this.player.vx) || (this.input.held ? 1 : -1);
+    if (this.mode !== 'hub') return;
+    const direction = this.input.held ? 1 : -1;
     this.player.vx = direction * speed;
   }
 
