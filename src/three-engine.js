@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { CONFIG } from './config.js';
 import { CrystalMotion } from './crystal-motion.js';
 import { loadConfig } from './config-store.js';
-import { SeededRandom } from './rng.js';
+import { createRunSeed, SeededRandom } from './rng.js';
 import { PlatformGenerator } from './platform-generator.js';
 import { GAME_STATES, GameSession } from './game-session.js';
 import { updateCollectibleEntity, updateEnemyEntity } from './entity-systems.js';
