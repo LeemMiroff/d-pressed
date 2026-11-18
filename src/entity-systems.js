@@ -35,6 +35,7 @@ export function updateEnemyEntity(game, entity, deltaSeconds) {
   }
 
   const wasHitFlight = entity.hitFlightTimer > 0;
+  entity.y = entity.platform.y;
   entity.hitTimer = Math.max(0, entity.hitTimer - deltaSeconds);
   entity.hitFlightTimer = Math.max(0, entity.hitFlightTimer - deltaSeconds);
   if (entity.hitFlightTimer > 0) {
@@ -49,6 +50,13 @@ export function updateEnemyEntity(game, entity, deltaSeconds) {
     }
     entity.renderOffsetX = 0;
     entity.renderOffsetY = 0;
+    if (entity.fleeing) {
+      const direction = Math.sign(entity.x + entity.width / 2 - game.player.x - game.player.width / 2)
+        || entity.lastHitDirection;
+      const minX = entity.platform.x;
+      const maxX = Math.max(minX, minX + entity.platform.width - entity.width);
+      entity.x = clamp(entity.x + direction * game.config.enemies.fleeing.speed * deltaSeconds, minX, maxX);
+    }
   }
   if (entity.hitTimer === 0 && entity.hitFlightTimer === 0 && overlap(game.player, {
     x: entity.x,

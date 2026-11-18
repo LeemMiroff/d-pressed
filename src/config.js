@@ -24,7 +24,7 @@ export const CONFIG = Object.freeze({
   platforms: {
     poolSize: 12,
     height: 8,
-    depth: 9,
+    depth: 13.5,
     wallMargin: 10,
     edgeClearance: 5,
     minWidth: 30,
@@ -84,7 +84,13 @@ export const CONFIG = Object.freeze({
     },
     hubTopRatio: 0.4,
   },
+  enemies: {
+    fleeing: { minDepth: 250, chance: 0.30, speed: 26, reward: 4 },
+    spiked: { minDepth: 600, chance: 0.20, reward: 3 },
+  },
   crystals: {
+    doubleCluster: { startDepth: 250, fullChanceDepth: 600, maxChance: 0.30 },
+    tripleCluster: { startDepth: 600, fullChanceDepth: 1000, maxChance: 0.10 },
     enabled: true,
     startingCount: 0,
     frameCount: 4,

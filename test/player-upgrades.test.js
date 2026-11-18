@@ -1,0 +1,37 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { ThreeGame } from '../src/three-engine.js';
+import { CONFIG } from '../src/config.js';
+
+test('speed upgrade applies in the hub and resets on a new run', () => {
+  const game = Object.create(ThreeGame.prototype);
+  game.config = structuredClone(CONFIG);
+  game.speedUpgrade = 0;
+  game.damage = 1;
+  game.upgradeCount = 0;
+  game.crystalCount = 1000;
+  game.input = { held: true };
+  game.player = { vx: 0, x: 10, width: 8 };
+  game.updateCounter = () => {};
+  game.updatePlayerFacing = () => {};
+  const station = { label: 'SPEED', level: 0 };
+  const base = game.getPlayerHorizontalSpeed();
+  assert.equal(game.activateStation(station), true);
+  assert.equal(game.getPlayerHorizontalSpeed(), base + game.config.upgrades.speedIncrement);
+  game.updateHorizontal(1);
+  assert.equal(game.player.vx, game.getPlayerHorizontalSpeed());
+  game.setRandomSeed = () => {};
+  game.stations = [station];
+  game.gameOverPanel = {};
+  game.setMode = () => {};
+  game.rebuildRoute = () => {};
+  game.platforms = [{ x: 0, y: 0, width: 20 }];
+  game.config.player.startPlatformIndex = 0;
+  game.enterHub = () => {};
+  game.resetRenderInterpolation = () => {};
+  game.applyAllViews = () => {};
+  game.restart(false, true);
+  assert.equal(game.getPlayerHorizontalSpeed(), base);
+  assert.equal(game.damage, 1);
+  assert.equal(game.config.player.maxHorizontalSpeed, base);
+});

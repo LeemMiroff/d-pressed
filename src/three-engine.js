@@ -9,6 +9,7 @@ import { GAME_STATES, GameSession } from './game-session.js';
 import { updateCollectibleEntity, updateEnemyEntity } from './entity-systems.js';
 
 const STEP = 1 / 60;
+const PLATFORM_RESERVE = 2;
 const SHADOW_COVERAGE = Object.freeze({
   horizontalMargin: 24,
   topMargin: 48,
@@ -17,6 +18,9 @@ const SHADOW_COVERAGE = Object.freeze({
   projectionPadding: 4,
 });
 const WALL_EMBED_INSET = 1;
+const CRYSTAL_WIDTH = 6;
+const CRYSTAL_SPACING = CRYSTAL_WIDTH * 1.25;
+const CRYSTAL_RADIUS = 3.2;
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const lerp = (from, to, amount) => from + (to - from) * amount;
 const overlap = (a, b) => a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
@@ -77,11 +81,15 @@ export class ThreeGame {
     this.runSeed = 0;
     this.rngState = 0;
     this.rng = new SeededRandom();
+    this.enemyRng = new SeededRandom();
+    this.crystalRng = new SeededRandom();
     this.activeRunTime = 0;
+    this.runDepth = 0;
     this.nextPortalPattern = config.platforms.hubPortal.everyPatterns;
     this.doublePlatformsDisabled = false;
     this.crystalCount = config.crystals.startingCount || 0;
     this.upgradeCount = 0;
+    this.speedUpgrade = 0;
     this.damage = 1;
     this.platforms = [];
     this.groups = [];
@@ -98,6 +106,7 @@ export class ThreeGame {
       player: this.player,
       random: () => this.random(),
       randomBetween: (min, max) => this.randomBetween(min, max),
+      getPlayerSpeed: () => this.getPlayerHorizontalSpeed(),
     });
     this.createHub();
     this.createPool();
@@ -109,6 +118,8 @@ export class ThreeGame {
 
   setRandomSeed(seed = createRunSeed()) {
     this.rng.setSeed(seed);
+    this.enemyRng.setSeed(seed ^ 0x9e3779b9);
+    this.crystalRng.setSeed(seed ^ 0x85ebca6b);
     this.runSeed = this.rng.seed;
     this.rngState = this.rng.state;
   }
@@ -485,7 +496,7 @@ export class ThreeGame {
   }
 
   getStationValue(station) {
-    return station.label === 'SPEED' ? this.config.player.maxHorizontalSpeed : this.damage;
+    return station.label === 'SPEED' ? this.getPlayerHorizontalSpeed() : this.damage;
   }
 
   updateStationLabel(station) {
@@ -539,7 +550,7 @@ export class ThreeGame {
   createPool() {
     const platformGeometry = new THREE.BoxGeometry(1, this.config.platforms.height, this.config.platforms.depth);
     const platformMaterial = new THREE.MeshStandardMaterial({ color: 0xc7a8a4, roughness: 0.72, metalness: 0.08 });
-    for (let index = 0; index < this.config.platforms.poolSize; index += 1) {
+    for (let index = 0; index < this.config.platforms.poolSize + PLATFORM_RESERVE; index += 1) {
       const node = new THREE.Group();
       const mesh = new THREE.Mesh(platformGeometry, platformMaterial);
       mesh.castShadow = true;
@@ -547,18 +558,28 @@ export class ThreeGame {
       node.add(mesh);
       node.visible = false;
       this.world.add(node);
-      this.platforms.push({ node, mesh, x: 0, y: 0, width: 1, height: this.config.platforms.height, active: false, previousY: 0, renderPreviousX: 0, renderPreviousY: 0, patternType: 'SINGLE', spawnContent: {}, portalPlatform: false, hubEntryOnly: false, recycledThisFrame: false, enemy: null, crystals: [], crystalsSpawned: false, chest: null });
+      this.platforms.push({ node, mesh, x: 0, y: 0, width: 1, height: this.config.platforms.height, active: false, previousY: 0, renderPreviousX: 0, renderPreviousY: 0, patternType: 'SINGLE', spawnContent: {}, portalPlatform: false, recycledThisFrame: false, enemy: null, crystals: [], chest: null });
     }
   }
 
   createEntityPool() {
     const enemyGeometry = new THREE.BoxGeometry(8, 8, 6);
+    const spikeGeometry = new THREE.ConeGeometry(0.85, 2.6, 4);
+    const spikeMaterial = new THREE.MeshStandardMaterial({ color: 0xffd7ac });
     const chestGeometry = new THREE.BoxGeometry(10, 8, 6);
-    const crystalGeometry = new THREE.OctahedronGeometry(3.2, 0);
+    const crystalGeometry = new THREE.OctahedronGeometry(CRYSTAL_RADIUS, 0);
     const chestMaterial = new THREE.MeshStandardMaterial({ color: 0xff8a5a, roughness: 0.42, metalness: 0.18 });
     const crystalMaterial = new THREE.MeshStandardMaterial({ color: 0x5ad7ff, emissive: 0x0b5575, emissiveIntensity: 1.6, roughness: 0.22, metalness: 0.25 });
     for (const platform of this.platforms) {
       const enemyView = new THREE.Mesh(enemyGeometry, new THREE.MeshStandardMaterial({ color: 0x9fcf42, roughness: 0.48, metalness: 0.05 }));
+      const spikes = new THREE.Group();
+      for (const x of [-2.5, 0, 2.5]) {
+        const spike = new THREE.Mesh(spikeGeometry, spikeMaterial);
+        spike.position.set(x, 5, 0);
+        spikes.add(spike);
+      }
+      spikes.visible = false;
+      enemyView.add(spikes);
       const chestView = new THREE.Mesh(chestGeometry, chestMaterial);
       enemyView.castShadow = true;
       enemyView.receiveShadow = true;
@@ -569,13 +590,12 @@ export class ThreeGame {
       chestView.visible = false;
       this.entities.push({ kind: 'enemy', view: enemyView, platform: null, x: 0, y: 0, width: 8, height: 8, defeated: false, active: false, health: 3, hitTimer: 0, hitFlightTimer: 0, lastHitDirection: 0, renderOffsetX: 0, renderOffsetY: 0, renderOffsetZ: 0, rotation: 0, renderPreviousX: 0, renderPreviousY: 0, renderPreviousOffsetX: 0, renderPreviousOffsetY: 0, renderPreviousOffsetZ: 0, renderPreviousRotation: 0, dying: false, deathVelocityX: 0, deathVelocityY: 0, deathVelocityZ: 0, deathDepthRemaining: 0, deathRotation: 0 });
       this.entities.push({ kind: 'chest', view: chestView, platform: null, x: 0, y: 0, width: 10, height: 8, active: false, opened: false, triggerOnly: true, solid: false, renderPreviousX: 0, renderPreviousY: 0, renderPreviousOffsetX: 0, renderPreviousOffsetY: 0, renderPreviousRotation: 0 });
-      for (const side of [0, 1]) {
+      for (let side = 0; side < 3; side += 1) {
         const crystalView = new THREE.Mesh(crystalGeometry, crystalMaterial);
         this.world.add(crystalView);
         crystalView.castShadow = true;
         crystalView.receiveShadow = true;
         crystalView.visible = false;
-        crystalView.position.z = 2;
         const crystal = { kind: 'crystal', view: crystalView, platform: null, x: 0, y: 0, width: 6, height: 6, active: false, collecting: false, phase: 'idle', floorY: 0, velocityX: 0, velocityY: 0, elapsed: 0, startX: 0, startY: 0, platformOffset: this.config.crystals.platformOffset ?? 1, bobPhase: side * Math.PI, rotationSpeed: 0, rotation: 0, renderOffsetX: 0, renderOffsetY: 0, renderPreviousX: 0, renderPreviousY: 0, renderPreviousOffsetX: 0, renderPreviousOffsetY: 0, renderPreviousRotation: 0 };
         crystal.motion = new CrystalMotion(this, crystal);
         this.entities.push(crystal);
@@ -596,12 +616,15 @@ export class ThreeGame {
   createUi() {
     this.ui = document.createElement('div');
     this.ui.className = 'three-ui';
-    this.ui.innerHTML = '<div class="three-ui__counter">CRYSTALS <strong data-crystals>0</strong></div><div class="three-ui__stats" aria-live="off">FPS <strong data-fps>--</strong><br>TRIANGLES <strong data-triangles>--</strong><br>VERTICES <strong data-vertices>--</strong></div><div class="three-ui__hint">HOLD / D TO MOVE RIGHT · R TO RESTART</div><div class="three-ui__gameover" data-gameover hidden>GAME OVER<br><button type="button" data-restart>RESTART</button></div>';
+    this.ui.innerHTML = '<div class="three-ui__counter">CRYSTALS <strong data-crystals>0</strong></div><div class="three-ui__stats" aria-live="off">FPS <strong data-fps>--</strong><br>TRIANGLES <strong data-triangles>--</strong><br>VERTICES <strong data-vertices>--</strong></div><div class="three-ui__player-stats">SPEED <strong data-player-speed>0</strong> / <strong data-player-max-speed>0</strong><br>DAMAGE <strong data-player-damage>0</strong></div><div class="three-ui__hint">HOLD / D TO MOVE RIGHT · R TO RESTART</div><div class="three-ui__gameover" data-gameover hidden>GAME OVER<br><button type="button" data-restart>RESTART</button></div>';
     document.body.append(this.ui);
     this.counter = this.ui.querySelector('[data-crystals]');
     this.fpsCounter = this.ui.querySelector('[data-fps]');
     this.trianglesCounter = this.ui.querySelector('[data-triangles]');
     this.verticesCounter = this.ui.querySelector('[data-vertices]');
+    this.playerSpeedCounter = this.ui.querySelector('[data-player-speed]');
+    this.playerMaxSpeedCounter = this.ui.querySelector('[data-player-max-speed]');
+    this.playerDamageCounter = this.ui.querySelector('[data-player-damage]');
     this.gameOverPanel = this.ui.querySelector('[data-gameover]');
     this.ui.querySelector('[data-restart]').addEventListener('click', () => this.restart());
   }
@@ -766,14 +789,12 @@ export class ThreeGame {
     platform.previousY = platform.y;
     platform.width = width;
     platform.patternType = type;
-    platform.hubEntryOnly = false;
     platform.portalPlatform = false;
     platform.active = true;
     platform.node.visible = true;
     platform.renderPreviousX = platform.x;
     platform.renderPreviousY = platform.y;
     this.applyPlatformView(platform);
-    platform.spawnContent = this.spawnContent(type);
   }
 
   pairedPlatformGap() {
@@ -809,21 +830,16 @@ export class ThreeGame {
     }
     platform.enemy = null;
     platform.crystals = [];
-    platform.crystalsSpawned = false;
     platform.chest = null;
   }
 
-  spawnContent(type) {
-    return this.platformGenerator.spawnContent(type);
-  }
-
-  choosePattern() {
+  choosePattern(canBuildDouble = true) {
     return this.platformGenerator.choosePattern({
       patternCount: this.patternCount,
       patternHistory: this.patternHistory,
       lastPatternType: this.lastPatternType,
       patternRepeatCount: this.patternRepeatCount,
-      doublePlatformsDisabled: this.doublePlatformsDisabled,
+      doublePlatformsDisabled: this.doublePlatformsDisabled || !canBuildDouble,
     });
   }
 
@@ -855,79 +871,56 @@ export class ThreeGame {
     return this.platformGenerator.randomPlatformX(width);
   }
 
-  randomWallX(width) {
+  randomWallX(width, previousPlatform, gap) {
     const result = this.platformGenerator.randomWallX(width, this.lastWallSide, this.wallSideRepeatCount);
-    this.lastWallSide = result.side;
-    this.wallSideRepeatCount = result.repeatCount;
-    return result.x;
+    const x = this.platformGenerator.avoidRepeatedWall(previousPlatform, result.x, width, gap);
+    const side = x === 0 ? 'left' : 'right';
+    this.wallSideRepeatCount = side === this.lastWallSide ? this.wallSideRepeatCount + 1 : 1;
+    this.lastWallSide = side;
+    return x;
   }
 
-  reachableX(previousPlatform, width, gap) {
-    return this.platformGenerator.reachableX(previousPlatform, width, gap);
+  singleGroupPlacement(type, width, previousPlatform, gap) {
+    if (type === 'WALL') return { width, x: this.randomWallX(width, previousPlatform, gap) };
+    return this.platformGenerator.singlePlacement(previousPlatform, width, gap);
   }
 
   configureGroupContent(group, type) {
-    return this.platformGenerator.configureGroupContent(group, type);
+    this.platformGenerator.configureGroupContent(group, type);
+    for (const platform of group) {
+      if (platform.spawnContent.enemy) this.spawnEnemy(platform);
+      if (platform.spawnContent.crystals) this.spawnCrystals(platform);
+      if (platform.spawnContent.chest) this.spawnChest(platform);
+    }
   }
 
   generateInitial(preserveProgression = false) {
-    let y = this.config.platforms.startY;
-    let previous = null;
     this.groups = [];
-    if (!preserveProgression) {
-      this.patternCount = 0;
-      this.patternHistory = [];
-      this.lastPatternType = null;
-      this.patternRepeatCount = 0;
-      this.lastWallSide = null;
-      this.wallSideRepeatCount = 0;
-    }
-    for (let index = 0; index < this.platforms.length; index += 1) {
-      const type = this.choosePattern();
-      const gap = previous ? this.randomBetween(this.config.platforms.minGap, this.config.platforms.maxGap) : 0;
-      y -= gap;
-      const startPlatformIndex = this.config.player.startPlatformIndex;
-      const wouldPairStartPlatform = index === startPlatformIndex || index + 1 === startPlatformIndex;
-      if (type === 'DOUBLE' && index < this.platforms.length - 1 && index % 2 === 0 && !wouldPairStartPlatform) {
-        const leftWidth = Math.floor(this.randomBetween(this.config.platforms.minWidth, this.config.platforms.maxWidth));
-        const rightWidth = Math.floor(this.randomBetween(this.config.platforms.minWidth, this.config.platforms.maxWidth));
-        const pairGap = this.pairedPlatformGap();
-        const widthScale = Math.min(1, (this.config.world.width - pairGap) / (leftWidth + rightWidth));
-        const scaledLeftWidth = Math.floor(leftWidth * widthScale);
-        const scaledRightWidth = Math.floor(rightWidth * widthScale);
-        this.configurePlatform(this.platforms[index], 0, y, scaledLeftWidth, 'DOUBLE');
-        this.configurePlatform(this.platforms[index + 1], this.config.world.width - scaledRightWidth, y, scaledRightWidth, 'DOUBLE');
-        const group = [this.platforms[index], this.platforms[index + 1]];
-        this.groups.push(group);
-        this.configureGroupContent(group, 'DOUBLE');
-        previous = this.platforms[index + 1];
-        index += 1;
-        this.registerPattern('DOUBLE', !preserveProgression);
-      } else {
-        const width = this.activeRunTime < this.config.platforms.platformProgressionDuration ? this.randomProgressiveWidth() : this.randomWidth();
-        const x = type === 'WALL' ? this.randomWallX(width) : previous ? this.reachableX(previous, width, gap) : this.randomPlatformX(width);
-        const patternType = type === 'WALL' ? 'WALL' : 'SINGLE';
-        this.configurePlatform(this.platforms[index], x, y, width, patternType);
-        const group = [this.platforms[index]];
-        this.groups.push(group);
-        this.configureGroupContent(group, patternType);
-        previous = this.platforms[index];
-        this.registerPattern(patternType, !preserveProgression);
-      }
-    }
-    this.assignSlots();
-  }
+    this.patternHistory = [];
+    this.lastPatternType = null;
+    this.patternRepeatCount = 0;
+    this.lastWallSide = null;
+    this.wallSideRepeatCount = 0;
 
-  assignSlots() {
-    const start = this.platforms[this.config.player.startPlatformIndex];
-    const slot = this.config.platforms.height + this.config.platforms.minGap;
-    const startGroup = this.groups.findIndex((group) => group.includes(start));
-    this.groups.forEach((group, index) => group.forEach((platform) => {
-      platform.y = this.config.platforms.startY - (index - startGroup + 1) * slot;
-      platform.previousY = platform.y;
-      platform.renderPreviousX = platform.x;
-      platform.renderPreviousY = platform.y;
-    }));
+    const routeSize = this.platforms.length - PLATFORM_RESERVE;
+    for (const platform of this.platforms.slice(routeSize)) {
+      platform.active = false;
+      platform.node.visible = false;
+    }
+
+    let previous = this.hubLanding;
+    for (let index = 0; index < routeSize;) {
+      const gap = this.randomBetween(this.config.platforms.minGap, this.config.platforms.maxGap);
+      const type = this.choosePattern(index + 1 < routeSize);
+      const size = type === 'DOUBLE' ? 2 : 1;
+      const group = this.platforms.slice(index, index + size);
+      const y = this.nextRouteY(previous, gap);
+      this.configureRouteGroup(group, y, type, previous, gap);
+      this.groups.push(group);
+      this.registerPattern(type, !preserveProgression);
+      previous = group.at(-1);
+      index += size;
+    }
   }
 
   restart(preserveProgression = false, startInHub = true) {
@@ -937,6 +930,7 @@ export class ThreeGame {
       this.setRandomSeed();
       this.difficultyTime = 0;
       this.activeRunTime = 0;
+      this.runDepth = 0;
       this.doublePlatformsDisabled = false;
       this.patternCount = 0;
       this.patternHistory = [];
@@ -948,6 +942,7 @@ export class ThreeGame {
       this.crystalCount = this.config.crystals.startingCount || 0;
       this.damage = 1;
       this.upgradeCount = 0;
+      this.speedUpgrade = 0;
       this.nextPortalPattern = Math.max(1, this.config.platforms.hubPortal.everyPatterns);
       this.stations.forEach((station) => { station.level = 0; station.passes = 0; station.passWindow = 0; station.firstDirection = 0; station.previousCenter = null; });
     }
@@ -981,7 +976,6 @@ export class ThreeGame {
     this.resetBackgroundWall();
     this.clearEntities();
     this.generateInitial(preserveProgression);
-    this.prepareRouteBelowHub();
   }
 
   enterHub() {
@@ -1023,55 +1017,6 @@ export class ThreeGame {
     this.applyAllViews();
   }
 
-  prepareRouteBelowHub() {
-    this.hubLanding.y = this.hub.y + this.hub.height + this.config.platforms.minGap;
-    this.hubLanding.previousY = this.hubLanding.y;
-    this.hubLandingGroup.visible = true;
-    const activeGroups = this.groups.filter((group) => group.every((platform) => platform.active));
-    const entryGroup = activeGroups.find((group) => group.length === 1) || activeGroups[0];
-    if (!entryGroup) return;
-
-    // PixelG always starts the generated route with one guaranteed landing
-    // on the right wall. The normal pattern generator begins only after it.
-    let previousPlatform = this.hubLanding;
-    const entryGap = this.randomBetween(this.config.platforms.minGap, this.config.platforms.maxGap);
-    const entryY = this.nextRouteY(previousPlatform, entryGap);
-    const entry = entryGroup[0];
-    const entryWidth = Math.floor(this.randomBetween(this.config.platforms.earlyWideMinWidth || 96, this.config.platforms.earlyWideMaxWidth || 98));
-    this.configurePlatform(entry, 0, entryY, Math.min(this.config.world.width, entryWidth), 'SINGLE');
-    this.configureGroupContent([entry], 'SINGLE');
-    entry.hubEntryOnly = true;
-    entry.node.visible = true;
-    previousPlatform = entry;
-
-    for (const group of activeGroups) {
-      if (group === entryGroup) continue;
-      const gap = this.randomBetween(this.config.platforms.minGap, this.config.platforms.maxGap);
-      const nextY = this.nextRouteY(previousPlatform, gap);
-      group.isPortalPair = false;
-      if (group.length > 1) {
-        const leftWidth = this.randomWidth();
-        const rightWidth = this.randomWidth();
-        const pairGap = this.pairedPlatformGap();
-        const scale = Math.min(1, (this.config.world.width - pairGap) / (leftWidth + rightWidth));
-        this.configurePlatform(group[0], 0, nextY, Math.floor(leftWidth * scale), 'DOUBLE');
-        this.configurePlatform(group[1], this.config.world.width - Math.floor(rightWidth * scale), nextY, Math.floor(rightWidth * scale), 'DOUBLE');
-        this.configureGroupContent(group, 'DOUBLE');
-        previousPlatform = group[1];
-      } else {
-        const platform = group[0];
-        const type = platform.patternType === 'WALL' ? 'WALL' : 'SINGLE';
-        const width = this.activeRunTime < this.config.platforms.platformProgressionDuration ? this.randomProgressiveWidth() : this.randomWidth();
-        const x = type === 'WALL' ? this.randomWallX(width) : this.reachableX(previousPlatform, width, gap);
-        this.configurePlatform(platform, x, nextY, width, type);
-        this.configureGroupContent([platform], type);
-        previousPlatform = platform;
-      }
-      group.forEach((platform) => { platform.node.visible = platform.active; platform.previousY = platform.y; });
-    }
-    this.applyAllViews();
-  }
-
   exitHub() {
     this.setMode(GAME_STATES.RUN);
     this.hubMoving = true;
@@ -1104,7 +1049,7 @@ export class ThreeGame {
       if (entity.kind === 'enemy') { entity.rotation = 0; entity.view.rotation.z = 0; }
       if (entity.view) entity.view.visible = false;
     }
-    for (const platform of this.platforms) { platform.enemy = null; platform.crystals = []; platform.crystalsSpawned = false; platform.chest = null; platform.portalPlatform = false; platform.hubEntryOnly = false; }
+    for (const platform of this.platforms) { platform.enemy = null; platform.crystals = []; platform.chest = null; platform.portalPlatform = false; }
     for (const group of this.groups) group.isPortalPair = false;
     this.clearPortals();
   }
@@ -1119,6 +1064,9 @@ export class ThreeGame {
     this.accumulator += Math.min(dt, 0.1);
     let steps = 0;
     while (this.accumulator >= STEP && steps < 16) { this.fixedUpdate(STEP); this.accumulator -= STEP; steps += 1; }
+    this.playerSpeedCounter.textContent = Math.abs(this.player.vx).toFixed(1);
+    this.playerMaxSpeedCounter.textContent = String(this.getPlayerHorizontalSpeed());
+    this.playerDamageCounter.textContent = String(this.damage);
     this.render(this.gameOver ? 1 : this.accumulator / STEP);
   }
 
@@ -1167,6 +1115,7 @@ export class ThreeGame {
       const maximumSpeed = Math.max(Number(flow.initialWorldSpeed) || 0, Number(flow.maxWorldSpeed) || 0);
       this.worldSpeed = Math.min(this.worldSpeed + acceleration * dt, maximumSpeed);
     }
+    this.runDepth += this.worldSpeed * dt;
     if (!this.doublePlatformsDisabled && this.difficultyTime >= this.config.platforms.doublePlatformsDuration) this.doublePlatformsDisabled = true;
     for (const platform of this.platforms) { if (!platform.active) continue; platform.previousY = platform.y; platform.y -= this.worldSpeed * dt; }
     this.updateBackgroundWall(dt);
@@ -1190,7 +1139,9 @@ export class ThreeGame {
     if (this.player.groundedOn?.recycledThisFrame) this.player.groundedOn = null;
     this.updateHorizontal(dt);
     this.updateVertical(dt);
+    if (this.gameOver) return;
     this.updateEntities(dt);
+    if (this.gameOver) return;
     this.updatePortals();
     if (this.player.y + this.player.height < 0 || this.player.y > this.worldHeight) this.setGameOver();
     this.applyAllViews();
@@ -1198,20 +1149,15 @@ export class ThreeGame {
 
   updateHorizontal(dt) {
     const direction = this.input.held ? 1 : -1;
-    const target = direction * this.config.player.maxHorizontalSpeed;
+    const target = direction * this.getPlayerHorizontalSpeed();
     const turning = this.player.vx !== 0 && Math.sign(this.player.vx) !== direction;
     this.player.vx = moveTowards(this.player.vx, target, (turning ? this.config.player.braking : this.config.player.acceleration) * dt);
     this.player.x = clamp(this.player.x + this.player.vx * dt, 0, this.config.world.width - this.player.width);
     this.updatePlayerFacing();
   }
 
-  setPlayerHorizontalSpeed(speed, applyVelocity = false) {
-    const nextSpeed = Math.max(0, Number(speed) || 0);
-    this.config.player.maxHorizontalSpeed = nextSpeed;
-    if (applyVelocity) {
-      const direction = this.input.held ? 1 : -1;
-      this.player.vx = direction * nextSpeed;
-    }
+  getPlayerHorizontalSpeed() {
+    return Math.max(0, Number(this.config.player.maxHorizontalSpeed) || 0) + this.speedUpgrade;
   }
 
   updateVertical(dt) {
@@ -1242,7 +1188,7 @@ export class ThreeGame {
   handleEnemyLanding(platform) {
     const enemy = platform.enemy;
     if (!enemy || enemy.defeated) return;
-    const enemyBounds = { x: enemy.x, y: enemy.y - enemy.height, width: enemy.width, height: enemy.height };
+    const enemyBounds = { x: enemy.x, y: platform.y - enemy.height, width: enemy.width, height: enemy.height };
     if (!overlap(this.player, enemyBounds)) return;
     this.hitEnemy(enemy, true);
   }
@@ -1274,6 +1220,11 @@ export class ThreeGame {
     }, null);
   }
 
+  configureRouteGroup(group, y, type, previousPlatform, gap) {
+    if (type === 'DOUBLE') this.configureDoubleGroup(group, y);
+    else this.configureSingleGroup(group, y, type, previousPlatform, gap);
+  }
+
   configureDoubleGroup(group, y) {
     const leftWidth = this.randomWidth();
     const rightWidth = this.randomWidth();
@@ -1290,12 +1241,8 @@ export class ThreeGame {
     const width = this.activeRunTime < this.config.platforms.platformProgressionDuration
       ? this.randomProgressiveWidth()
       : this.randomWidth();
-    const x = type === 'WALL'
-      ? this.randomWallX(width)
-      : previousPlatform
-        ? this.reachableX(previousPlatform, width, gap)
-        : this.randomPlatformX(width);
-    this.configurePlatform(group[0], x, y, width, type);
+    const placement = this.singleGroupPlacement(type, width, previousPlatform, gap);
+    this.configurePlatform(group[0], placement.x, y, placement.width, type);
     this.configureGroupContent(group, type);
   }
 
@@ -1312,18 +1259,18 @@ export class ThreeGame {
 
       let group = originalGroup;
       let lowest = this.findLowestPlatform(new Set([group]));
-      let requestedType = this.choosePattern();
-      if (!this.config.platforms.enablePairedPlatforms || this.doublePlatformsDisabled) {
-        if (requestedType === 'DOUBLE') requestedType = 'SINGLE';
-      }
+      const reserve = this.platforms.filter((platform) => !platform.active);
+      const partner = reserve.length ? null : this.groups.find((candidate) => (
+        candidate !== group && candidate.length === 1 && this.isGroupOffscreen(candidate)
+      ));
+      const requestedType = this.choosePattern(group.length > 1 || reserve.length > 0 || Boolean(partner));
 
       if (group.length === 1 && requestedType === 'DOUBLE') {
-        const partner = this.groups.find((candidate) => (
-          candidate !== group
-          && candidate.length === 1
-          && this.isGroupOffscreen(candidate)
-        ));
-        if (partner) {
+        if (reserve.length) {
+          const index = this.groups.indexOf(group);
+          group = [group[0], reserve[0]];
+          this.groups[index] = group;
+        } else if (partner) {
           const firstIndex = this.groups.indexOf(group);
           const secondIndex = this.groups.indexOf(partner);
           const insertIndex = Math.min(firstIndex, secondIndex);
@@ -1333,8 +1280,6 @@ export class ThreeGame {
           this.groups.splice(insertIndex, 0, pair);
           group = pair;
           lowest = this.findLowestPlatform(new Set([group]));
-        } else {
-          requestedType = 'SINGLE';
         }
       }
 
@@ -1348,21 +1293,32 @@ export class ThreeGame {
         const firstGroup = [first];
         const secondGroup = [second];
         const firstIndex = this.groups.indexOf(group);
+        if (reserve.length < PLATFORM_RESERVE) {
+          this.configureSingleGroup(firstGroup, y, requestedType, previousPlatform, gap);
+          this.clearPlatformEntities(second);
+          second.active = false;
+          second.node.visible = false;
+          this.groups[firstIndex] = firstGroup;
+          first.recycledThisFrame = true;
+          second.recycledThisFrame = true;
+          this.registerPattern(requestedType);
+          continue;
+        }
         const firstGap = gap;
         const secondGap = this.randomBetween(this.config.platforms.minGap, this.config.platforms.maxGap);
         this.configureSingleGroup(firstGroup, y, requestedType, previousPlatform, firstGap);
         const secondY = this.nextRouteY(first, secondGap);
-        this.configureSingleGroup(secondGroup, secondY, requestedType, first, secondGap);
+        this.registerPattern(requestedType);
+        const secondType = this.choosePattern(false);
+        this.configureSingleGroup(secondGroup, secondY, secondType, first, secondGap);
         this.groups.splice(firstIndex, 1, firstGroup, secondGroup);
         first.recycledThisFrame = true;
         second.recycledThisFrame = true;
-        this.registerPattern(requestedType);
-        this.registerPattern(requestedType);
+        this.registerPattern(secondType);
         continue;
       }
 
-      if (group.length > 1) this.configureDoubleGroup(group, y);
-      else this.configureSingleGroup(group, y, requestedType, previousPlatform, gap);
+      this.configureRouteGroup(group, y, requestedType, previousPlatform, gap);
       group.isPortalPair = false;
       group.forEach((platform) => { platform.recycledThisFrame = true; });
       this.registerPattern(group.length > 1 ? 'DOUBLE' : requestedType);
@@ -1374,12 +1330,6 @@ export class ThreeGame {
   }
 
   updateEntities(dt) {
-    for (const platform of this.platforms) {
-      if (!platform.active || platform.portalPlatform || platform.hubEntryOnly) continue;
-      if (platform.spawnContent.enemy && !platform.enemy) this.spawnEnemy(platform);
-      if (platform.spawnContent.crystals && !platform.crystalsSpawned) this.spawnCrystals(platform);
-      if (platform.spawnContent.chest && !platform.chest) this.spawnChest(platform);
-    }
     const entityUpdateState = { collectedCrystalThisFrame: false };
     for (const entity of this.entities) {
       if (entity.kind === 'enemy') updateEnemyEntity(this, entity, dt);
@@ -1411,6 +1361,17 @@ export class ThreeGame {
     const entity = this.entities.find((candidate) => candidate.kind === 'enemy' && !candidate.active && !candidate.platform);
     if (!entity) return;
     const view = entity.view;
+    const { fleeing, spiked } = this.config.enemies;
+    const roll = this.enemyRng.next();
+    const safeLandingWidth = entity.width + 2 * (this.player.width + 2);
+    const spikedChance = this.runDepth >= spiked.minDepth && platform.width >= safeLandingWidth
+      ? spiked.chance : 0;
+    const fleeingChance = this.runDepth >= fleeing.minDepth ? fleeing.chance : 0;
+    entity.enemyType = roll < spikedChance ? 'spiked' : roll < spikedChance + fleeingChance ? 'fleeing' : 'static';
+    entity.fleeing = false;
+    view.children[0].visible = entity.enemyType === 'spiked';
+    view.material.color.setHex({ static: 0x9fcf42, fleeing: 0x41cfbd, spiked: 0xc45386 }[entity.enemyType]);
+    view.material.emissive.setHex(0);
     view.castShadow = true;
     entity.platform = platform;
     entity.x = platform.x + platform.width / 2 - 4;
@@ -1434,16 +1395,21 @@ export class ThreeGame {
     entity.renderOffsetZ = 0;
     entity.renderPreviousOffsetZ = 0;
     this.captureEntityRenderState(entity);
-    view.visible = true;
     platform.enemy = entity;
+    this.applyEntityView(entity);
   }
 
   hitEnemy(enemy, stomp = false) {
-    if (!enemy || !enemy.active || enemy.defeated || enemy.hitTimer > 0 || enemy.hitFlightTimer > 0) return;
+    if (this.gameOver || !enemy || !enemy.active || enemy.defeated || enemy.hitTimer > 0 || enemy.hitFlightTimer > 0) return;
+    if (stomp && enemy.enemyType === 'spiked') {
+      this.setGameOver();
+      return;
+    }
     const direction = Math.sign(this.player.vx) || (this.player.x < enemy.x ? 1 : -1);
     if (!stomp && enemy.lastHitDirection === direction) return;
     if (stomp) enemy.health = 0;
     else enemy.health -= Math.max(1, this.damage);
+    if (enemy.enemyType === 'fleeing' && enemy.health > 0) enemy.fleeing = true;
     enemy.hitTimer = 0.08;
     enemy.hitFlightTimer = 0.18;
     enemy.hitFlightOffsetX = direction * 2;
@@ -1460,7 +1426,7 @@ export class ThreeGame {
       enemy.deathDepthRemaining = Number(this.config.platforms.depth) || 9;
       enemy.deathRotation = direction > 0 ? 18 : -18;
       enemy.platform = null;
-      this.spawnBurst(enemy.x + enemy.width / 2, enemy.y, 3, deathPlatform);
+      this.spawnBurst(enemy.x + enemy.width / 2, enemy.y, this.config.enemies[enemy.enemyType]?.reward ?? 3, deathPlatform);
     }
     if (stomp) {
       this.player.groundedOn = null;
@@ -1468,14 +1434,26 @@ export class ThreeGame {
     }
   }
   spawnCrystals(platform) {
-    const available = this.entities.filter((candidate) => candidate.kind === 'crystal' && !candidate.active && !candidate.platform).slice(0, 2);
-    if (available.length < 2) return;
-    for (const side of [0, 1]) {
+    const { doubleCluster, tripleCluster } = this.config.crystals;
+    const chance = ({ startDepth, fullChanceDepth, maxChance }) =>
+      clamp((this.runDepth - startDepth) / (fullChanceDepth - startDepth), 0, 1) * maxChance;
+    const roll = this.crystalRng.next();
+    const tripleChance = chance(tripleCluster);
+    const desired = roll < tripleChance ? 3 : roll < tripleChance + chance(doubleCluster) ? 2 : 1;
+    const capacity = Math.max(0, 1 + Math.floor((platform.width - CRYSTAL_WIDTH) / CRYSTAL_SPACING));
+    const count = Math.min(desired, capacity);
+    const clusterWidth = CRYSTAL_WIDTH + (count - 1) * CRYSTAL_SPACING;
+    const freeWidth = platform.width - clusterWidth;
+    const platformCenter = platform.x + platform.width / 2;
+    const startX = platform.x + freeWidth * (platformCenter < this.config.world.width / 2 ? 0.75 : 0.25);
+    const available = this.entities.filter((candidate) => candidate.kind === 'crystal' && !candidate.active && !candidate.platform).slice(0, count);
+    if (available.length < count) return;
+    for (let side = 0; side < count; side += 1) {
       const entity = available[side];
       const view = entity.view;
       const platformOffset = Number(this.config.crystals.platformOffset);
       entity.platform = platform;
-      entity.x = side === 0 ? platform.x + 3 : platform.x + platform.width - 9;
+      entity.x = startX + side * CRYSTAL_SPACING;
       entity.platformOffset = Number.isFinite(platformOffset) ? Math.max(0, platformOffset) : 1;
       entity.y = platform.y - entity.platformOffset;
       entity.floorY = entity.y;
@@ -1488,10 +1466,9 @@ export class ThreeGame {
       view.rotation.y = 0;
       entity.active = true;
       this.captureEntityRenderState(entity);
-      view.visible = true;
+      this.applyEntityView(entity);
       platform.crystals.push(entity);
     }
-    platform.crystalsSpawned = true;
   }
   spawnChest(platform) {
     const entity = this.entities.find((candidate) => candidate.kind === 'chest' && !candidate.active && !candidate.platform);
@@ -1502,8 +1479,8 @@ export class ThreeGame {
     entity.active = true;
     entity.opened = false;
     this.captureEntityRenderState(entity);
-    entity.view.visible = true;
     platform.chest = entity;
+    this.applyEntityView(entity);
   }
   spawnBurst(x, floorY, count, platform = null) {
     for (let index = 0; index < count; index += 1) {
@@ -1656,8 +1633,8 @@ export class ThreeGame {
     this.upgradeCount += 1;
     station.level += 1;
     if (station.label === 'SPEED') {
-      const nextSpeed = Math.min(upgrades.speedMaximum, this.config.player.maxHorizontalSpeed + upgrades.speedIncrement);
-      this.setPlayerHorizontalSpeed(nextSpeed, true);
+      const nextSpeed = Math.min(upgrades.speedMaximum, this.getPlayerHorizontalSpeed() + upgrades.speedIncrement);
+      this.speedUpgrade += nextSpeed - current;
     } else {
       this.damage = Math.min(upgrades.damageMaximum, this.damage + upgrades.damageIncrement);
     }
@@ -1703,10 +1680,16 @@ export class ThreeGame {
     const offsetX = entity.renderOffsetX || 0;
     const offsetY = entity.renderOffsetY || 0;
     const offsetZ = entity.renderOffsetZ || 0;
-    const renderLayer = entity.kind === 'crystal' || entity.kind === 'burst' ? (entity.phase === 'counter' ? 4 : 2) : 1;
+    const renderLayer = this.entityRenderLayer(entity);
     entity.view.position.set(entity.x + (entity.width || 0) / 2 + offsetX, this.logicalY(entity.y - (entity.height || 0) / 2 - offsetY), renderLayer + offsetZ);
     const platformVisible = !entity.platform || entity.platform.node.visible;
     entity.view.visible = entity.active !== false && (!entity.defeated || entity.dying) && platformVisible;
+  }
+
+  entityRenderLayer(entity) {
+    if (entity.kind === 'crystal') return this.config.platforms.depth / 2 - CRYSTAL_RADIUS;
+    if (entity.kind === 'burst') return entity.phase === 'counter' ? 4 : 2;
+    return 1;
   }
 
   applyInterpolatedEntityView(entity, alpha) {
@@ -1718,7 +1701,7 @@ export class ThreeGame {
     const offsetZ = lerp(entity.renderPreviousOffsetZ ?? 0, entity.renderOffsetZ || 0, alpha);
     const currentRotation = Number.isFinite(entity.rotation) ? entity.rotation : entity.view.rotation.z;
     const rotation = lerp(entity.renderPreviousRotation ?? currentRotation, currentRotation, alpha);
-    const renderLayer = entity.kind === 'crystal' || entity.kind === 'burst' ? (entity.phase === 'counter' ? 4 : 2) : 1;
+    const renderLayer = this.entityRenderLayer(entity);
     entity.view.position.set(x + (entity.width || 0) / 2 + offsetX, this.logicalY(y - (entity.height || 0) / 2 - offsetY), renderLayer + offsetZ);
     if (entity.kind === 'crystal' || entity.kind === 'burst') entity.view.rotation.y = rotation;
     else entity.view.rotation.z = rotation;

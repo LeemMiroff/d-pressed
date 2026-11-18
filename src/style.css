@@ -5,6 +5,8 @@ canvas { display: block; width: 100%; height: 100%; image-rendering: pixelated; 
 .three-ui__counter { position: absolute; top: 14px; left: 16px; padding: 6px 10px; background: rgba(23,23,29,.75); border: 1px solid #8e6874; }
 .three-ui__stats { position: absolute; top: 51px; left: 16px; padding: 4px 10px 6px; color: #c7a8a4; background: rgba(23,23,29,.75); border: 1px solid #543642; font-size: 10px; line-height: 1.45; }
 .three-ui__stats strong { color: #fff; font-weight: 600; }
+.three-ui__player-stats { position: absolute; bottom: max(36px, env(safe-area-inset-bottom)); left: max(16px, env(safe-area-inset-left)); padding: 6px 10px; color: #c7a8a4; background: rgba(23,23,29,.75); border: 1px solid #543642; font-size: 10px; line-height: 1.45; }
+.three-ui__player-stats strong { color: #fff; font-weight: 600; }
 .three-ui__hint { position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%); color: #c7a8a4; white-space: nowrap; }
 .three-ui__gameover { position: absolute; inset: 0; display: grid; place-content: center; gap: 14px; text-align: center; font-size: 24px; background: rgba(0,0,0,.65); pointer-events: auto; }
 .three-ui__gameover button, .inspector__actions button { padding: 8px 12px; cursor: pointer; color: #17171d; background: #c7a8a4; border: 0; font: inherit; }

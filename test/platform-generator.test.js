@@ -3,6 +3,41 @@ import assert from 'node:assert/strict';
 import { CONFIG } from '../src/config.js';
 import { PlatformGenerator } from '../src/platform-generator.js';
 
+test('opening picks respect the repeat limit when a pair cannot be built', () => {
+  const generator = makeGenerator([0.99]);
+  for (const patternCount of [3, 4, 5]) {
+    assert.equal(generator.choosePattern({
+      patternCount,
+      patternHistory: ['SINGLE', 'SINGLE'],
+      lastPatternType: 'SINGLE',
+      patternRepeatCount: 2,
+      doublePlatformsDisabled: true,
+    }), 'WALL');
+  }
+});
+
+test('single platforms leave room for the player at both walls', () => {
+  for (const roll of [0, 0.99]) {
+    const generator = makeGenerator([roll]);
+    for (const requestedWidth of [40, 102]) {
+      const { x, width } = generator.singlePlacement({ x: 0, width: 96 }, requestedWidth, 42);
+      assert.ok(x > generator.player.width);
+      assert.ok(CONFIG.world.width - x - width > generator.player.width);
+    }
+  }
+});
+
+test('wide singles switch walls when snapping would repeat the previous side', () => {
+  const width = 96;
+  const right = CONFIG.world.width - width;
+  assert.equal(makeGenerator([0]).reachableX({ x: 0, width }, width, 30), right);
+  assert.equal(makeGenerator([0.99]).reachableX({ x: right, width }, width, 30), 0);
+});
+
+test('wall switching keeps a same-side landing when the opposite wall is out of reach', () => {
+  assert.equal(makeGenerator([0]).reachableX({ x: 0, width: 20 }, 20, 30), 0);
+});
+
 function makeGenerator(randomValues = []) {
   const config = structuredClone(CONFIG);
   const player = { width: config.player.width };

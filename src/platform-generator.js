@@ -1,11 +1,12 @@
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
 export class PlatformGenerator {
-  constructor({ config, player, random, randomBetween }) {
+  constructor({ config, player, random, randomBetween, getPlayerSpeed }) {
     this.config = config;
     this.player = player;
     this.random = random;
     this.randomBetween = randomBetween;
+    this.getPlayerSpeed = getPlayerSpeed || (() => this.config.player.maxHorizontalSpeed);
   }
 
   spawnContent(type) {
@@ -25,20 +26,16 @@ export class PlatformGenerator {
     let candidates = ['SINGLE', 'WALL', 'DOUBLE'].filter((type) => (
       type !== 'DOUBLE' || (this.config.platforms.enablePairedPlatforms && !state.doublePlatformsDisabled)
     ));
-    const openingPatterns = this.config.platforms.openingPatterns || [];
-    if (state.patternCount < openingPatterns.length) {
-      const openingType = openingPatterns[state.patternCount];
-      if (candidates.includes(openingType)) return openingType;
-      if (openingType === 'DOUBLE') return 'SINGLE';
-    }
     if (state.lastPatternType && state.patternRepeatCount >= (this.config.platforms.maxPatternRepeat ?? 2)) {
       candidates = candidates.filter((type) => type !== state.lastPatternType);
     }
+    const openingType = this.config.platforms.openingPatterns?.[state.patternCount];
+    if (candidates.includes(openingType)) return openingType;
     const transitions = this.config.platforms.patternTransitions || {};
     if (state.lastPatternType === 'SINGLE' && candidates.includes('SINGLE')) {
       const chance = Number.isFinite(transitions.singleToOtherChance) ? transitions.singleToOtherChance : 0.75;
       candidates = this.random() < chance ? candidates.filter((type) => type !== 'SINGLE') : ['SINGLE'];
-    } else if ((state.lastPatternType === 'WALL' || state.lastPatternType === 'DOUBLE') && candidates.includes('SINGLE')) {
+    } else if ((state.lastPatternType === 'WALL' || state.lastPatternType === 'DOUBLE') && candidates.includes('SINGLE') && candidates.includes(state.lastPatternType)) {
       const chance = Number.isFinite(transitions.wallOrDoubleToSingleChance) ? transitions.wallOrDoubleToSingleChance : 0.9;
       candidates = this.random() < chance
         ? candidates.filter((type) => type !== state.lastPatternType)
@@ -117,7 +114,7 @@ export class PlatformGenerator {
       side = this.random() < 0.5 ? 'left' : 'right';
       nextRepeatCount = 1;
     } else {
-      const sameSideChance = wallSideRepeatCount >= 2 ? 0.1 : 0.25;
+      const sameSideChance = wallSideRepeatCount >= 2 ? 0 : 0.25;
       side = this.random() < sameSideChance ? lastWallSide : lastWallSide === 'left' ? 'right' : 'left';
       nextRepeatCount = side === lastWallSide ? wallSideRepeatCount + 1 : 1;
     }
@@ -130,15 +127,41 @@ export class PlatformGenerator {
 
   reachableX(previousPlatform, width, gap) {
     const fallTime = Math.sqrt((2 * gap) / this.config.player.gravity);
-    const maximumReach = this.config.player.maxHorizontalSpeed * fallTime + 8;
+    const maximumReach = this.getPlayerSpeed() * fallTime + 8;
     const previousCenter = previousPlatform.x + previousPlatform.width / 2;
     const targetCenter = previousCenter + this.randomBetween(-maximumReach, maximumReach);
     const maximumX = this.config.world.width - width;
     const candidate = clamp(targetCenter - width / 2, 0, maximumX);
     const margin = Math.max(this.config.platforms.wallMargin, this.player.width);
-    if (candidate < margin) return 0;
-    if (candidate > maximumX - margin) return maximumX;
-    return candidate;
+    const x = candidate < margin ? 0 : candidate > maximumX - margin ? maximumX : candidate;
+    return this.avoidRepeatedWall(previousPlatform, x, width, gap);
+  }
+
+  singlePlacement(previousPlatform, requestedWidth, gap) {
+    const clearance = Math.max(this.config.platforms.wallMargin, Math.ceil(this.player.width) + 1);
+    const width = Math.min(requestedWidth, this.config.world.width - clearance * 2);
+    const rightmostX = this.config.world.width - width - clearance;
+    const fallTime = Math.sqrt(2 * gap / this.config.player.gravity);
+    const reach = this.getPlayerSpeed() * fallTime + 8;
+    const center = previousPlatform
+      ? previousPlatform.x + previousPlatform.width / 2
+      : this.config.world.width / 2;
+    const offset = previousPlatform ? this.randomBetween(-reach, reach) : 0;
+    return { width, x: clamp(Math.round(center + offset - width / 2), clearance, rightmostX) };
+  }
+
+  avoidRepeatedWall(previousPlatform, x, width, gap) {
+    const worldWidth = this.config.world.width;
+    const rightX = worldWidth - width;
+    if (!previousPlatform || previousPlatform.patternType === 'DOUBLE' || rightX <= 0) return x;
+    const repeatsLeft = x === 0 && previousPlatform.x === 0;
+    const repeatsRight = x === rightX && previousPlatform.x + previousPlatform.width >= worldWidth;
+    if (!repeatsLeft && !repeatsRight) return x;
+
+    const oppositeX = repeatsLeft ? rightX : 0;
+    const separation = Math.max(0, oppositeX - previousPlatform.x - previousPlatform.width, previousPlatform.x - oppositeX - width);
+    const reach = this.getPlayerSpeed() * Math.sqrt(2 * gap / this.config.player.gravity);
+    return separation <= reach ? oppositeX : x;
   }
 
   configureGroupContent(group, type) {
