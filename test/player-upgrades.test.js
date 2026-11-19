@@ -2,6 +2,119 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ThreeGame } from '../src/three-engine.js';
 import { CONFIG } from '../src/config.js';
+import { CARD_PRICE, REROLL_PRICE, RUN_CARDS, drawRunCards } from '../src/run-cards.js';
+
+test('all enemy types can be hit again from the same direction after landing', () => {
+  const game = Object.create(ThreeGame.prototype);
+  game.config = structuredClone(CONFIG);
+  game.cardLevels = {};
+  game.player = { x: 0, vx: 1 };
+  game.damage = 1;
+  for (const enemyType of ['static', 'fleeing', 'spiked']) {
+    game.attackCooldown = 0;
+    const enemy = { x: 5, active: true, health: 3, enemyType };
+    game.hitEnemy(enemy);
+    assert.equal(enemy.health, 2);
+    game.hitEnemy(enemy);
+    assert.equal(enemy.health, 2);
+    enemy.hitFlightTimer = 0;
+    game.attackCooldown = 0;
+    game.hitEnemy(enemy);
+    assert.equal(enemy.health, 1);
+  }
+});
+
+test('the player cooldown gates damage independently of the enemy animation', () => {
+  const game = Object.create(ThreeGame.prototype);
+  game.config = structuredClone(CONFIG);
+  game.cardLevels = { stomp: 1 };
+  game.damage = 1;
+  game.player = { x: 0, vx: 1, vy: 4 };
+  const enemy = { x: 5, active: true, health: 4, enemyType: 'static' };
+  game.hitEnemy(enemy, true);
+  assert.equal(enemy.hitFlightTimer, 0.16);
+  assert.equal(enemy.health, 3);
+  game.player.vx = -1;
+  game.hitEnemy(enemy);
+  assert.equal(enemy.health, 3);
+  game.attackCooldown = 0;
+  game.player.vy = 4;
+  game.hitEnemy(enemy, true);
+  assert.equal(enemy.health, 3);
+  assert.equal(game.player.vy, 4);
+  game.hitEnemy(enemy);
+  assert.equal(enemy.health, 2);
+});
+
+test('player attack speed limits hits across different enemies', () => {
+  const game = Object.create(ThreeGame.prototype);
+  game.config = structuredClone(CONFIG);
+  game.config.player.attacksPerSecond = 4;
+  game.cardLevels = {};
+  game.player = { x: 0, vx: 1 };
+  game.damage = 1;
+  game.mode = 'transition';
+  game.transitionRemaining = 1;
+  game.captureRenderState = () => {};
+  const first = { x: 5, active: true, health: 3 };
+  const second = { x: 10, active: true, health: 3 };
+  game.hitEnemy(first);
+  assert.equal(first.health, 2);
+  game.fixedUpdate(0.125);
+  game.hitEnemy(second);
+  assert.equal(second.health, 3);
+  game.fixedUpdate(0.125);
+  game.hitEnemy(second);
+  assert.equal(second.health, 2);
+});
+
+test('portal cards charge once and can be skipped without spending crystals', () => {
+  const game = Object.create(ThreeGame.prototype);
+  game.config = structuredClone(CONFIG);
+  game.cardLevels = {};
+  game.input = { held: true };
+  game.updateCounter = () => {};
+  game.choosingCard = true;
+  game.crystalCount = CARD_PRICE - 1;
+  const card = RUN_CARDS.find(({ id }) => id === 'damage');
+  game.cardOffers = [card];
+  game.chooseRunCard(card);
+  assert.equal(game.cardBonus('damage'), 0);
+  assert.equal(game.choosingCard, true);
+  game.chooseRunCard();
+  assert.equal(game.crystalCount, CARD_PRICE - 1);
+  game.choosingCard = true;
+  game.cardOffers = [card];
+  game.crystalCount = CARD_PRICE;
+  game.chooseRunCard(card);
+  game.chooseRunCard(card);
+  assert.equal(game.cardBonus('damage'), 1);
+  assert.equal(game.crystalCount, 0);
+  assert.equal(game.choosingCard, false);
+});
+
+test('purchase and paid reroll refresh an affordable offer', () => {
+  const game = Object.create(ThreeGame.prototype);
+  game.config = structuredClone(CONFIG);
+  const card = RUN_CARDS.find(({ id }) => id === 'speed');
+  game.cardLevels = {};
+  game.cardOffers = [card];
+  game.choosingCard = true;
+  game.crystalCount = CARD_PRICE + 30 + REROLL_PRICE;
+  game.updateCounter = () => {};
+  let refreshes = 0;
+  game.openCardChoice = () => { refreshes += 1; };
+  game.chooseRunCard(card);
+  game.rerollRunCards();
+  assert.equal(refreshes, 2);
+  assert.equal(game.crystalCount, 30);
+  assert.equal(game.getRunCardPrice(), 30);
+  assert.equal(game.cardBonus('speed'), 5);
+  const first = drawRunCards(() => 0);
+  const second = drawRunCards(() => 0, first);
+  assert.equal(new Set(second).size, 3);
+  assert.ok(second.some((offer) => !first.includes(offer)));
+});
 
 test('speed upgrade applies in the hub and resets on a new run', () => {
   const game = Object.create(ThreeGame.prototype);

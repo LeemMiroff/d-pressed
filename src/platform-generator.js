@@ -14,11 +14,10 @@ export class PlatformGenerator {
     if (type === 'DOUBLE') {
       return { enemy: true, crystals: this.random() < 0.6, chest: this.random() < 0.3 };
     }
-    return {
-      enemy: this.random() < (rule.enemyChance || 0),
-      crystals: this.random() < (rule.crystalChance || 0),
-      chest: this.random() < (rule.chestChance || 0),
-    };
+    const enemy = this.random() < (rule.enemyChance || 0);
+    const crystals = this.random() < (rule.crystalChance || 0);
+    const chest = this.random() < (rule.chestChance || 0);
+    return { enemy: enemy && !chest, crystals, chest };
   }
 
   choosePattern(state) {

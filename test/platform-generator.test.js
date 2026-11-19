@@ -3,6 +3,14 @@ import assert from 'node:assert/strict';
 import { CONFIG } from '../src/config.js';
 import { PlatformGenerator } from '../src/platform-generator.js';
 
+test('a chest takes the center slot when both a chest and an enemy are rolled', () => {
+  for (const type of ['SINGLE', 'WALL']) {
+    assert.deepEqual(makeGenerator([0]).spawnContent(type), {
+      enemy: false, crystals: true, chest: true,
+    });
+  }
+});
+
 test('opening picks respect the repeat limit when a pair cannot be built', () => {
   const generator = makeGenerator([0.99]);
   for (const patternCount of [3, 4, 5]) {

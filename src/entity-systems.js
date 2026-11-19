@@ -1,3 +1,5 @@
+export const ENEMY_HIT_FLIGHT_SECONDS = 0.16;
+
 const overlap = (first, second) => (
   first.x < second.x + second.width
   && first.x + first.width > second.x
@@ -9,6 +11,11 @@ const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
 export function updateEnemyEntity(game, entity, deltaSeconds) {
   if (!entity.active) return;
+  const wasHitFlight = entity.hitFlightTimer > 0;
+  entity.hitFlightTimer = Math.max(0, entity.hitFlightTimer - deltaSeconds);
+  if (wasHitFlight && entity.hitFlightTimer === 0) {
+    entity.view.material?.emissive?.setHex(0);
+  }
   if (entity.dying) {
     entity.deathVelocityY += 440 * deltaSeconds;
     entity.x += entity.deathVelocityX * deltaSeconds;
@@ -34,50 +41,49 @@ export function updateEnemyEntity(game, entity, deltaSeconds) {
     return;
   }
 
-  const wasHitFlight = entity.hitFlightTimer > 0;
   entity.y = entity.platform.y;
-  entity.hitTimer = Math.max(0, entity.hitTimer - deltaSeconds);
-  entity.hitFlightTimer = Math.max(0, entity.hitFlightTimer - deltaSeconds);
-  if (entity.hitFlightTimer > 0) {
-    const progress = 1 - entity.hitFlightTimer / 0.18;
-    entity.renderOffsetX = entity.hitFlightOffsetX * progress;
-    entity.renderOffsetY = 16 * progress * (1 - progress);
-  } else {
-    if (wasHitFlight && entity.hitFlightOffsetX && entity.platform) {
-      const minX = entity.platform.x + 1;
-      const maxX = entity.platform.x + entity.platform.width - entity.width - 1;
-      entity.x = clamp(entity.x + entity.hitFlightOffsetX, minX, Math.max(minX, maxX));
-    }
-    entity.renderOffsetX = 0;
-    entity.renderOffsetY = 0;
-    if (entity.fleeing) {
-      const direction = Math.sign(entity.x + entity.width / 2 - game.player.x - game.player.width / 2)
-        || entity.lastHitDirection;
-      const minX = entity.platform.x;
-      const maxX = Math.max(minX, minX + entity.platform.width - entity.width);
-      entity.x = clamp(entity.x + direction * game.config.enemies.fleeing.speed * deltaSeconds, minX, maxX);
-    }
+  if (wasHitFlight && entity.hitFlightTimer === 0 && entity.hitFlightOffsetX) {
+    const minX = entity.platform.x + 1;
+    const maxX = entity.platform.x + entity.platform.width - entity.width - 1;
+    entity.x = clamp(entity.x + entity.hitFlightOffsetX, minX, Math.max(minX, maxX));
   }
-  if (entity.hitTimer === 0 && entity.hitFlightTimer === 0 && overlap(game.player, {
+  const touchingPlayer = overlap(game.player, {
     x: entity.x,
     y: entity.y - entity.height,
     width: entity.width,
     height: entity.height,
-  })) {
+  });
+  if (touchingPlayer) {
     const stomp = game.player.vy > 0 && game.player.y + game.player.height <= entity.y + 2;
     game.hitEnemy(entity, stomp);
+    if (entity.defeated || game.gameOver) return;
   }
-  if ((entity.hitTimer > 0 || entity.hitFlightTimer > 0) && entity.view.material?.emissive) entity.view.material.emissive.setHex(0xffd66b);
-  else if (entity.view.material?.emissive) entity.view.material.emissive.setHex(0x000000);
+
+  if (entity.hitFlightTimer > 0) {
+    const progress = 1 - entity.hitFlightTimer / ENEMY_HIT_FLIGHT_SECONDS;
+    entity.renderOffsetX = entity.hitFlightOffsetX * progress;
+    entity.renderOffsetY = 16 * progress * (1 - progress);
+  } else {
+    entity.renderOffsetX = 0;
+    entity.renderOffsetY = 0;
+  }
+  if (entity.fleeing) {
+    const direction = Math.sign(entity.x + entity.width / 2 - game.player.x - game.player.width / 2)
+      || Math.sign(game.player.vx);
+    const minX = entity.platform.x;
+    const maxX = Math.max(minX, minX + entity.platform.width - entity.width);
+    entity.x = clamp(entity.x + direction * game.config.enemies.fleeing.speed * deltaSeconds, minX, maxX);
+  }
 }
 
 export function updateCollectibleEntity(game, entity, deltaSeconds, state) {
   if (entity.kind === 'crystal') {
+    const pickupRange = game.cardBonus('magnet');
     if (!state.collectedCrystalThisFrame && entity.active && !entity.collecting && overlap(game.player, {
-      x: entity.x,
-      y: entity.y - entity.height,
-      width: entity.width,
-      height: entity.height,
+      x: entity.x - pickupRange,
+      y: entity.y - entity.height - pickupRange,
+      width: entity.width + pickupRange * 2,
+      height: entity.height + pickupRange * 2,
     })) {
       entity.motion.collect();
       state.collectedCrystalThisFrame = true;

@@ -32,5 +32,27 @@ canvas { display: block; width: 100%; height: 100%; image-rendering: pixelated; 
 .inspector__telemetry { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; margin: 14px 0 0; padding-top: 10px; border-top: 1px solid #543642; }
 .inspector__telemetry dd { margin: 0; text-align: right; color: #fff; }
 .three-ui__gameover[hidden] { display: none; }
+.three-ui__cards { position: absolute; z-index: 2; display: grid; justify-items: center; gap: 6px; box-sizing: border-box; padding-inline: 6px; text-align: center; }
+.three-ui__cards[hidden] { display: none; }
+.three-ui__cards h2 { margin: 0; font-size: 15px; text-shadow: 0 2px 3px #17171d; }
+.three-ui__card-balance { color: #aee7ff; text-shadow: 0 2px 3px #17171d; }
+.three-ui__card-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(4px, 1vw, 12px); width: min(100%, 510px); }
+.three-ui__cards button { pointer-events: auto; color: #fff2e6; font: inherit; cursor: pointer; }
+.three-ui__card { --accent: #72dbd3; display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 8px 4px; min-width: 0; border: 1px solid var(--accent); border-radius: 6px; background: linear-gradient(155deg, #472d41, #201b2a 65%); box-shadow: inset 0 0 0 2px #271e2c, 0 4px 8px #131019b3; overflow-wrap: anywhere; }
+.three-ui__card[data-card="damage"] { --accent: #ff9e81; }
+.three-ui__card[data-card="bounty"] { --accent: #f8cb78; }
+.three-ui__card strong { line-height: 1.15; }
+.three-ui__card > span:not([class]) { font-size: 11px; line-height: 1.2; }
+.three-ui__card-icon { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; color: var(--accent); background: #211828; font-size: 18px; }
+.three-ui__card-icon::before { content: "∩"; }
+.three-ui__card[data-card="damage"] .three-ui__card-icon::before { content: "✦"; }
+.three-ui__card[data-card="bounty"] .three-ui__card-icon::before { content: "◆"; }
+.three-ui__card[data-card="stomp"] .three-ui__card-icon::before { content: "↓"; }
+.three-ui__card[data-card="speed"] .three-ui__card-icon::before { content: "»"; }
+.three-ui__card-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
+.three-ui__card-price { margin-top: auto; padding-top: 3px; color: #aee7ff; }
+.three-ui__card-skip { min-height: 44px; padding-inline: 10px; border: 1px solid #8e6874; border-radius: 4px; background: #251e2beF; }
+.three-ui__cards button:focus-visible { outline: 2px solid #fff2e6; outline-offset: 2px; }
+.three-ui__cards button:disabled { opacity: .55; cursor: default; }
 .inspector__preset { display: flex; gap: 6px; margin: 8px 0; } .inspector__preset input, .inspector__preset select { min-width: 0; flex: 1; color: #fff; background: #2d2229; border: 1px solid #8e6874; font: inherit; } .inspector__preset button { padding: 4px 6px; color: #17171d; background: #c7a8a4; border: 0; font: inherit; cursor: pointer; }
 @media (max-width: 420px) { .inspector { right: 6px; top: 6px; width: calc(100vw - 12px); max-height: calc(100vh - 12px); } .inspector__tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); } .inspector__actions { flex-wrap: wrap; } }

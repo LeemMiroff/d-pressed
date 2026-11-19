@@ -1,9 +1,13 @@
+import { RUN_CARDS } from './run-cards.js';
+
 export const CONFIG = Object.freeze({
+  cards: Object.fromEntries(RUN_CARDS.map(({ id, bonus }) => [id, { enabled: true, grantImmediately: false, bonus }])),
   world: {
     width: 120,
     height: 240,
   },
   player: {
+    attacksPerSecond: 2,
     width: 8,
     height: 8,
     visualWidth: 10,
@@ -85,7 +89,7 @@ export const CONFIG = Object.freeze({
     hubTopRatio: 0.4,
   },
   enemies: {
-    fleeing: { minDepth: 250, chance: 0.30, speed: 26, reward: 4 },
+    fleeing: { minDepth: 250, chance: 0.30, speed: 52, reward: 4 },
     spiked: { minDepth: 600, chance: 0.20, reward: 3 },
   },
   crystals: {

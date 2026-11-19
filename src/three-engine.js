@@ -6,7 +6,8 @@ import { loadConfig } from './config-store.js';
 import { createRunSeed, SeededRandom } from './rng.js';
 import { PlatformGenerator } from './platform-generator.js';
 import { GAME_STATES, GameSession } from './game-session.js';
-import { updateCollectibleEntity, updateEnemyEntity } from './entity-systems.js';
+import { ENEMY_HIT_FLIGHT_SECONDS, updateCollectibleEntity, updateEnemyEntity } from './entity-systems.js';
+import { CARD_PRICE, CARD_PRICE_MULTIPLIER, REROLL_PRICE, drawRunCards } from './run-cards.js';
 
 const STEP = 1 / 60;
 const PLATFORM_RESERVE = 2;
@@ -83,6 +84,7 @@ export class ThreeGame {
     this.rng = new SeededRandom();
     this.enemyRng = new SeededRandom();
     this.crystalRng = new SeededRandom();
+    this.cardRng = new SeededRandom();
     this.activeRunTime = 0;
     this.runDepth = 0;
     this.nextPortalPattern = config.platforms.hubPortal.everyPatterns;
@@ -91,6 +93,8 @@ export class ThreeGame {
     this.upgradeCount = 0;
     this.speedUpgrade = 0;
     this.damage = 1;
+    this.cardLevels = {};
+    this.choosingCard = false;
     this.platforms = [];
     this.groups = [];
     this.portals = null;
@@ -120,6 +124,7 @@ export class ThreeGame {
     this.rng.setSeed(seed);
     this.enemyRng.setSeed(seed ^ 0x9e3779b9);
     this.crystalRng.setSeed(seed ^ 0x85ebca6b);
+    this.cardRng.setSeed(seed ^ 0xc2b2ae35);
     this.runSeed = this.rng.seed;
     this.rngState = this.rng.state;
   }
@@ -442,7 +447,7 @@ export class ThreeGame {
     this.hubLandingGroup = new THREE.Group();
     this.hubLandingGroup.add(this.hubLandingMesh);
     this.world.add(this.hubLandingGroup);
-    this.stations = [this.makeStation('SPEED', 24, 0x5ad7ff), this.makeStation('DAMAGE', 62, 0xff8a5a)];
+    this.stations = [];
     this.stations.forEach((station) => this.hubGroup.add(station.node));
     this.world.add(this.hubGroup);
   }
@@ -588,7 +593,7 @@ export class ThreeGame {
       this.world.add(enemyView, chestView);
       enemyView.visible = false;
       chestView.visible = false;
-      this.entities.push({ kind: 'enemy', view: enemyView, platform: null, x: 0, y: 0, width: 8, height: 8, defeated: false, active: false, health: 3, hitTimer: 0, hitFlightTimer: 0, lastHitDirection: 0, renderOffsetX: 0, renderOffsetY: 0, renderOffsetZ: 0, rotation: 0, renderPreviousX: 0, renderPreviousY: 0, renderPreviousOffsetX: 0, renderPreviousOffsetY: 0, renderPreviousOffsetZ: 0, renderPreviousRotation: 0, dying: false, deathVelocityX: 0, deathVelocityY: 0, deathVelocityZ: 0, deathDepthRemaining: 0, deathRotation: 0 });
+      this.entities.push({ kind: 'enemy', view: enemyView, platform: null, x: 0, y: 0, width: 8, height: 8, defeated: false, active: false, health: 3, hitFlightTimer: 0, renderOffsetX: 0, renderOffsetY: 0, renderOffsetZ: 0, rotation: 0, renderPreviousX: 0, renderPreviousY: 0, renderPreviousOffsetX: 0, renderPreviousOffsetY: 0, renderPreviousOffsetZ: 0, renderPreviousRotation: 0, dying: false, deathVelocityX: 0, deathVelocityY: 0, deathVelocityZ: 0, deathDepthRemaining: 0, deathRotation: 0 });
       this.entities.push({ kind: 'chest', view: chestView, platform: null, x: 0, y: 0, width: 10, height: 8, active: false, opened: false, triggerOnly: true, solid: false, renderPreviousX: 0, renderPreviousY: 0, renderPreviousOffsetX: 0, renderPreviousOffsetY: 0, renderPreviousRotation: 0 });
       for (let side = 0; side < 3; side += 1) {
         const crystalView = new THREE.Mesh(crystalGeometry, crystalMaterial);
@@ -627,6 +632,133 @@ export class ThreeGame {
     this.playerDamageCounter = this.ui.querySelector('[data-player-damage]');
     this.gameOverPanel = this.ui.querySelector('[data-gameover]');
     this.ui.querySelector('[data-restart]').addEventListener('click', () => this.restart());
+    this.cardPanel = document.createElement('section');
+    this.cardPanel.className = 'three-ui__cards';
+    this.cardPanel.hidden = true;
+    this.cardPanel.setAttribute('role', 'dialog');
+    this.cardPanel.setAttribute('aria-modal', 'true');
+    this.cardPanel.setAttribute('aria-label', 'Выбор улучшения');
+    this.ui.append(this.cardPanel);
+  }
+
+  openCardChoice() {
+    this.choosingCard = true;
+    const cost = this.getRunCardPrice();
+    const offers = drawRunCards(() => this.cardRng.next(), this.cardOffers, this.config.cards);
+    this.cardOffers = offers;
+    this.cardPanel.innerHTML = '<h2>Выбери улучшение</h2>';
+    const balance = document.createElement('div');
+    balance.textContent = `Кристаллов: ${this.crystalCount}`;
+    balance.className = 'three-ui__card-balance';
+    this.cardPanel.append(balance);
+    const row = document.createElement('div');
+    row.className = 'three-ui__card-row';
+    this.cardPanel.append(row);
+    for (const card of offers) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'three-ui__card';
+      button.dataset.card = card.id;
+      const icon = document.createElement('span');
+      icon.className = 'three-ui__card-icon';
+      icon.setAttribute('aria-hidden', 'true');
+      const title = document.createElement('strong');
+      title.textContent = card.name;
+      const description = document.createElement('span');
+      description.textContent = card.description(this.config.cards[card.id].bonus);
+      const price = document.createElement('span');
+      price.className = 'three-ui__card-price';
+      price.textContent = `◆ ${cost}`;
+      price.setAttribute('aria-label', `${cost} кристаллов`);
+      button.append(icon, title, description, price);
+      button.disabled = this.crystalCount < cost;
+      button.addEventListener('click', () => {
+        if (this.cardOffers === offers) this.chooseRunCard(card);
+      });
+      row.append(button);
+    }
+    const skip = document.createElement('button');
+    skip.type = 'button';
+    skip.className = 'three-ui__card-skip';
+    skip.textContent = 'Продолжить без покупки';
+    skip.addEventListener('click', () => this.chooseRunCard());
+    const actions = document.createElement('div');
+    actions.className = 'three-ui__card-actions';
+    const reroll = document.createElement('button');
+    reroll.type = 'button';
+    reroll.className = 'three-ui__card-skip';
+    reroll.textContent = `Реролл · ◆ ${REROLL_PRICE}`;
+    reroll.disabled = this.crystalCount < REROLL_PRICE || this.enabledCardCount() <= 3;
+    reroll.addEventListener('click', () => {
+      if (this.cardOffers === offers) this.rerollRunCards();
+    });
+    actions.append(reroll, skip);
+    this.cardPanel.append(actions);
+    this.cardPanel.hidden = false;
+    this.positionCardChoice();
+    this.cardPanel.querySelector('button:not(:disabled)').focus();
+  }
+
+  positionCardChoice() {
+    if (!this.choosingCard) return;
+    const viewport = this.canvas.getBoundingClientRect();
+    this.camera.updateMatrixWorld();
+    const visualHeight = this.config.player.visualHeight * this.config.player.visualScale;
+    const anchor = new THREE.Vector3(
+      this.config.world.width / 2,
+      this.logicalY(this.hub.y) + visualHeight * 1.5,
+      0,
+    ).project(this.camera);
+    this.cardPanel.style.left = `${viewport.left}px`;
+    this.cardPanel.style.width = `${viewport.width}px`;
+    const anchorY = viewport.top + (1 - anchor.y) * viewport.height / 2;
+    const panelBottom = Math.max(anchorY, viewport.top + this.cardPanel.offsetHeight + 8);
+    this.cardPanel.style.bottom = `${window.innerHeight - panelBottom}px`;
+  }
+
+  getRunCardPrice() {
+    const purchases = Object.values(this.cardLevels).reduce((total, level) => total + level, 0);
+    return Math.round(CARD_PRICE * CARD_PRICE_MULTIPLIER ** purchases);
+  }
+
+  chooseRunCard(card) {
+    if (!this.choosingCard) return;
+    if (card) {
+      const cost = this.getRunCardPrice();
+      if (!this.cardOffers.includes(card) || this.crystalCount < cost) return;
+      this.crystalCount -= cost;
+      this.cardLevels[card.id] = (this.cardLevels[card.id] || 0) + 1;
+      this.updateCounter();
+      if (this.crystalCount >= this.getRunCardPrice()) {
+        this.openCardChoice();
+        return;
+      }
+    }
+    this.closeCardChoice();
+  }
+
+  rerollRunCards() {
+    if (!this.choosingCard || this.crystalCount < REROLL_PRICE || this.enabledCardCount() <= 3) return;
+    this.crystalCount -= REROLL_PRICE;
+    this.updateCounter();
+    this.openCardChoice();
+  }
+
+  closeCardChoice() {
+    this.choosingCard = false;
+    this.cardOffers = [];
+    if (this.cardPanel) this.cardPanel.hidden = true;
+    this.input.held = false;
+  }
+
+  cardBonus(id) {
+    const setting = this.config.cards[id];
+    const purchasedLevels = setting.enabled ? this.cardLevels?.[id] || 0 : 0;
+    return Math.max(purchasedLevels, Number(setting.grantImmediately)) * setting.bonus;
+  }
+
+  enabledCardCount() {
+    return Object.values(this.config.cards).filter(({ enabled }) => enabled).length;
   }
 
   resize() {
@@ -668,6 +800,7 @@ export class ThreeGame {
     this.hubLanding.active = true;
     this.applyHubView();
     this.applyHubLandingView();
+    this.positionCardChoice();
     if (this.mode === 'hub') this.updateHubRouteVisibility();
     this.applyAllViews();
     this.resetRenderInterpolation();
@@ -807,7 +940,6 @@ export class ThreeGame {
       if (entity.platform !== platform) continue;
       entity.active = false;
       entity.defeated = false;
-      entity.hitTimer = 0;
       entity.hitFlightTimer = 0;
       entity.renderOffsetX = 0;
       entity.renderOffsetY = 0;
@@ -924,6 +1056,7 @@ export class ThreeGame {
   }
 
   restart(preserveProgression = false, startInHub = true) {
+    this.closeCardChoice();
     this.input.held = false;
     this.transitionRemaining = 0;
     if (!preserveProgression) {
@@ -941,6 +1074,7 @@ export class ThreeGame {
       this.worldSpeed = this.config.platforms.initialWorldSpeed;
       this.crystalCount = this.config.crystals.startingCount || 0;
       this.damage = 1;
+      this.cardLevels = {};
       this.upgradeCount = 0;
       this.speedUpgrade = 0;
       this.nextPortalPattern = Math.max(1, this.config.platforms.hubPortal.everyPatterns);
@@ -963,6 +1097,7 @@ export class ThreeGame {
   }
 
   rebuildRoute(preserveProgression = true) {
+    this.attackCooldown = 0;
     this.player.groundedOn = null;
     this.player.vx = 0;
     this.player.vy = 0;
@@ -1013,6 +1148,7 @@ export class ThreeGame {
     this.transitionRemaining = 0;
     this.rebuildRoute(true);
     this.enterHub();
+    this.openCardChoice();
     this.resetRenderInterpolation();
     this.applyAllViews();
   }
@@ -1031,7 +1167,6 @@ export class ThreeGame {
     for (const entity of this.entities) {
       entity.active = false;
       entity.defeated = false;
-      entity.hitTimer = 0;
       entity.hitFlightTimer = 0;
       entity.dying = false;
       entity.collecting = false;
@@ -1066,7 +1201,7 @@ export class ThreeGame {
     while (this.accumulator >= STEP && steps < 16) { this.fixedUpdate(STEP); this.accumulator -= STEP; steps += 1; }
     this.playerSpeedCounter.textContent = Math.abs(this.player.vx).toFixed(1);
     this.playerMaxSpeedCounter.textContent = String(this.getPlayerHorizontalSpeed());
-    this.playerDamageCounter.textContent = String(this.damage);
+    this.playerDamageCounter.textContent = String(this.damage + this.cardBonus('damage'));
     this.render(this.gameOver ? 1 : this.accumulator / STEP);
   }
 
@@ -1082,7 +1217,8 @@ export class ThreeGame {
   }
 
   fixedUpdate(dt) {
-    if (this.gameOver) return;
+    if (this.gameOver || this.choosingCard) return;
+    this.attackCooldown = Math.max(0, this.attackCooldown - dt);
     this.captureRenderState();
     if (this.mode === 'hub') {
       this.updateHorizontal(dt);
@@ -1157,7 +1293,7 @@ export class ThreeGame {
   }
 
   getPlayerHorizontalSpeed() {
-    return Math.max(0, Number(this.config.player.maxHorizontalSpeed) || 0) + this.speedUpgrade;
+    return Math.max(0, Number(this.config.player.maxHorizontalSpeed) || 0) + this.speedUpgrade + this.cardBonus('speed');
   }
 
   updateVertical(dt) {
@@ -1369,6 +1505,7 @@ export class ThreeGame {
     const fleeingChance = this.runDepth >= fleeing.minDepth ? fleeing.chance : 0;
     entity.enemyType = roll < spikedChance ? 'spiked' : roll < spikedChance + fleeingChance ? 'fleeing' : 'static';
     entity.fleeing = false;
+    entity.stompUsed = false;
     view.children[0].visible = entity.enemyType === 'spiked';
     view.material.color.setHex({ static: 0x9fcf42, fleeing: 0x41cfbd, spiked: 0xc45386 }[entity.enemyType]);
     view.material.emissive.setHex(0);
@@ -1379,7 +1516,6 @@ export class ThreeGame {
     entity.defeated = false;
     entity.active = true;
     entity.health = 3;
-    entity.hitTimer = 0;
     entity.hitFlightTimer = 0;
     entity.dying = false;
     entity.deathVelocityX = 0;
@@ -1389,7 +1525,6 @@ export class ThreeGame {
     entity.deathRotation = 0;
     entity.rotation = 0;
     view.rotation.z = 0;
-    entity.lastHitDirection = 0;
     entity.renderOffsetX = 0;
     entity.renderOffsetY = 0;
     entity.renderOffsetZ = 0;
@@ -1400,20 +1535,28 @@ export class ThreeGame {
   }
 
   hitEnemy(enemy, stomp = false) {
-    if (this.gameOver || !enemy || !enemy.active || enemy.defeated || enemy.hitTimer > 0 || enemy.hitFlightTimer > 0) return;
+    if (this.gameOver || !enemy || !enemy.active || enemy.defeated) return;
     if (stomp && enemy.enemyType === 'spiked') {
       this.setGameOver();
       return;
     }
+    if (this.attackCooldown > 0) return;
     const direction = Math.sign(this.player.vx) || (this.player.x < enemy.x ? 1 : -1);
-    if (!stomp && enemy.lastHitDirection === direction) return;
-    if (stomp) enemy.health = 0;
-    else enemy.health -= Math.max(1, this.damage);
+    if (stomp) {
+      const damage = this.cardBonus('stomp');
+      if (!damage || enemy.stompUsed) return;
+      enemy.stompUsed = true;
+      this.player.groundedOn = null;
+      this.player.vy = -Math.sqrt(this.config.player.gravity * 16);
+      enemy.health -= damage;
+    } else {
+      enemy.health -= Math.max(1, this.damage + this.cardBonus('damage'));
+    }
+    this.attackCooldown = 1 / Math.max(0.5, this.config.player.attacksPerSecond);
     if (enemy.enemyType === 'fleeing' && enemy.health > 0) enemy.fleeing = true;
-    enemy.hitTimer = 0.08;
-    enemy.hitFlightTimer = 0.18;
-    enemy.hitFlightOffsetX = direction * 2;
-    enemy.lastHitDirection = direction;
+    enemy.hitFlightTimer = ENEMY_HIT_FLIGHT_SECONDS;
+    enemy.view?.material?.emissive?.setHex(0xffd66b);
+    enemy.hitFlightOffsetX = enemy.fleeing ? 0 : direction * 2;
     if (enemy.health <= 0) {
       enemy.defeated = true;
       const deathPlatform = enemy.platform;
@@ -1426,11 +1569,8 @@ export class ThreeGame {
       enemy.deathDepthRemaining = Number(this.config.platforms.depth) || 9;
       enemy.deathRotation = direction > 0 ? 18 : -18;
       enemy.platform = null;
-      this.spawnBurst(enemy.x + enemy.width / 2, enemy.y, this.config.enemies[enemy.enemyType]?.reward ?? 3, deathPlatform);
-    }
-    if (stomp) {
-      this.player.groundedOn = null;
-      this.player.vy = -Math.sqrt(this.config.player.gravity * 16);
+      const reward = (this.config.enemies[enemy.enemyType]?.reward ?? 3) + this.cardBonus('bounty');
+      this.spawnBurst(enemy.x + enemy.width / 2, enemy.y, reward, deathPlatform);
     }
   }
   spawnCrystals(platform) {

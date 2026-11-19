@@ -1,7 +1,10 @@
+import { RUN_CARDS } from './run-cards.js';
+
 const TAB_DEFINITIONS = [
   ['flow', 'Поток'],
   ['player', 'Игрок'],
   ['character', 'Персонаж'],
+  ['cards', 'Карточки'],
   ['camera', 'Камера'],
   ['lighting', 'Свет'],
   ['presets', 'Пресеты'],
@@ -38,6 +41,9 @@ export class ThreeInspector {
         </section>
         <section class="inspector__panel" id="inspector-panel-character" data-panel="character" role="tabpanel" tabindex="0">
           <div data-controls="character"></div>
+        </section>
+        <section class="inspector__panel" id="inspector-panel-cards" data-panel="cards" role="tabpanel" tabindex="0">
+          <div data-controls="cards"></div>
         </section>
         <section class="inspector__panel" id="inspector-panel-camera" data-panel="camera" role="tabpanel" tabindex="0">
           <div data-controls="camera"></div>
@@ -144,6 +150,7 @@ export class ThreeInspector {
       ['platforms.hubPortal.everyPatterns', 'Портал каждые паттерны', 1, 200, 1, 'flow', 'Через сколько сгенерированных паттернов появляется пара порталов в хаб.'],
       ['platforms.hubPortal.platformWidthRatio', 'Ширина платформ портала', 0.2, 0.49, 0.01, 'flow', 'Доля ширины мира, которую занимает каждая платформа у порталов.'],
       ['player.maxHorizontalSpeed', 'Скорость игрока', 1, 120, 1, 'player', 'Максимальная горизонтальная скорость игрока.'],
+      ['player.attacksPerSecond', 'Ударов в секунду', 0.5, 20, 0.25, 'player', 'Общий темп атак игрока, включая удары по разным врагам.'],
       ['player.acceleration', 'Ускорение', 1, 2000, 1, 'player', 'Как быстро игрок набирает заданную горизонтальную скорость.'],
       ['player.braking', 'Торможение', 1, 2000, 1, 'player', 'Как быстро игрок меняет направление и гасит текущую скорость.'],
       ['player.gravity', 'Гравитация', 1, 2000, 1, 'player', 'Сила падения игрока после прыжка и при отсутствии платформы под ним.'],
@@ -167,6 +174,29 @@ export class ThreeInspector {
       ['lighting.fillPositionZ', 'Заполняющий свет Z', -240, 360, 1, 'lighting', 'Позиция дополнительного света по глубине сцены.'],
     ];
     definitions.forEach((definition) => this.addControl(...definition));
+    const cardControls = this.root.querySelector('[data-controls="cards"]');
+    for (const card of RUN_CARDS) {
+      const controls = [
+        ['enabled', card.name],
+        ['grantImmediately', 'Выдать игроку сразу'],
+      ];
+      for (const [key, text] of controls) {
+        const path = `cards.${card.id}.${key}`;
+        const label = document.createElement('label');
+        label.className = 'inspector__check';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.dataset.cardSetting = path;
+        checkbox.checked = this.read(path);
+        checkbox.addEventListener('change', () => {
+          this.write(path, checkbox.checked);
+          if (key === 'enabled' && game.choosingCard) game.openCardChoice();
+        });
+        label.append(checkbox, text);
+        cardControls.append(label);
+      }
+      this.addControl(`cards.${card.id}.bonus`, 'Бонус за уровень', 1, 50, 1, 'cards', card.description(card.bonus));
+    }
     this.root.querySelectorAll('[data-tab]').forEach((tab) => tab.addEventListener('click', () => this.activateTab(tab.dataset.tab)));
     this.root.querySelector('[data-close]').addEventListener('click', () => {
       this.root.hidden = true;
@@ -244,6 +274,11 @@ export class ThreeInspector {
       this.write(path, value);
       source.value = value;
       target.value = value;
+      if (path === 'player.attacksPerSecond') return;
+      if (category === 'cards') {
+        if (this.game.choosingCard) this.game.openCardChoice();
+        return;
+      }
       if (path.startsWith('lighting.')) {
         this.game.applyLighting();
         return;
@@ -269,6 +304,9 @@ export class ThreeInspector {
     payload['platforms.increaseWorldSpeed'] = this.increaseWorldSpeedInput.checked;
     payload['platforms.useFlowProgression'] = this.flowProgressionInput.checked;
     payload['lighting.shadowsEnabled'] = this.shadowsInput.checked;
+    for (const checkbox of this.root.querySelectorAll('[data-card-setting]')) {
+      payload[checkbox.dataset.cardSetting] = checkbox.checked;
+    }
     return payload;
   }
 
@@ -346,6 +384,12 @@ export class ThreeInspector {
   }
 
   applySettings(values) {
+    for (const checkbox of this.root.querySelectorAll('[data-card-setting]')) {
+      const path = checkbox.dataset.cardSetting;
+      if (typeof values[path] !== 'boolean') continue;
+      this.write(path, values[path]);
+      checkbox.checked = values[path];
+    }
     for (const row of this.root.querySelectorAll('.inspector__row')) {
       const value = values[row.dataset.path];
       if (!Number.isFinite(value)) continue;
