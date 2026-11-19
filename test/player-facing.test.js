@@ -2,18 +2,21 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PlayerFacing } from '../src/player-facing.js';
 
-test('combat facing follows an enemy anywhere on the same platform', () => {
+test('combat facing acquires within 20 and releases beyond 28 on the same platform', () => {
   const facing = new PlayerFacing();
   const platform = {};
-  const enemy = { active: true, platform, x: 50, width: 8 };
+  const enemy = { active: true, platform, x: 21, width: 8 };
   platform.enemy = enemy;
   const player = { groundedOn: platform, x: 0, width: 8, vx: -50 };
+  facing.updateForPlayer(0.16, player);
+  assert.equal(facing.enemyTarget, null);
+  enemy.x = 20;
   assert.equal(facing.updateForPlayer(0.16, player), -1);
   assert.equal(facing.yaw, Math.PI / 2);
-  enemy.x = 80;
+  enemy.x = 28;
   facing.updateForPlayer(0.1, player);
   assert.equal(facing.enemyTarget, enemy);
-  player.groundedOn = null;
+  enemy.x = 29;
   facing.updateForPlayer(0.1, player);
   assert.equal(facing.enemyTarget, null);
 });

@@ -1,5 +1,7 @@
 const SIDE_YAW = Math.PI / 2;
 const TURN_SPEED = Math.PI / 0.16;
+const ENEMY_ACQUIRE_DISTANCE = 20;
+const ENEMY_RELEASE_DISTANCE = 28;
 const ENEMY_DIRECTION_DEAD_ZONE = 1;
 const STABLE_INPUT_DURATION = 0.5;
 
@@ -33,12 +35,14 @@ export class PlayerFacing {
     const validEnemy = enemy?.active && !enemy.defeated && enemy.platform === player.groundedOn;
     if (validEnemy) {
       const offset = enemy.x + enemy.width / 2 - player.x - player.width / 2;
-      this.enemyTarget = enemy;
-      const direction = Math.abs(offset) <= ENEMY_DIRECTION_DEAD_ZONE
-        ? Math.sign(this.targetYaw)
-        : Math.sign(offset);
-      this.turnTowards(direction, dt);
-      return this.playbackDirection(movementDirection);
+      const distance = Math.abs(offset);
+      const range = enemy === this.enemyTarget ? ENEMY_RELEASE_DISTANCE : ENEMY_ACQUIRE_DISTANCE;
+      if (distance <= range) {
+        this.enemyTarget = enemy;
+        const direction = distance <= ENEMY_DIRECTION_DEAD_ZONE ? Math.sign(this.targetYaw) : Math.sign(offset);
+        this.turnTowards(direction, dt);
+        return this.playbackDirection(movementDirection);
+      }
     }
     this.enemyTarget = null;
     if (turning) {
