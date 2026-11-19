@@ -9,6 +9,8 @@ import { GAME_STATES, GameSession } from './game-session.js';
 import { ENEMY_HIT_FLIGHT_SECONDS, updateCollectibleEntity, updateEnemyEntity } from './entity-systems.js';
 import { CARD_PRICE, CARD_PRICE_MULTIPLIER, REROLL_PRICE, drawRunCards } from './run-cards.js';
 import { PlayerFacing } from './player-facing.js';
+import { WindLeaves } from './wind-leaves.js';
+import { ENEMY_COLORS, createEnemyTexture, createChestTexture, mapBoxFront } from './entity-textures.js';
 
 const STEP = 1 / 60;
 const PLATFORM_RESERVE = 2;
@@ -106,6 +108,7 @@ export class ThreeGame {
     this.renderStats = { lastTime: performance.now(), elapsed: 0, frames: 0 };
     this.setRandomSeed();
     this.createBackground();
+    this.windLeaves = new WindLeaves(this.world, this.config.world.width);
     this.createPlayer();
     this.platformGenerator = new PlatformGenerator({
       config: this.config,
@@ -571,14 +574,17 @@ export class ThreeGame {
 
   createEntityPool() {
     const enemyGeometry = new THREE.BoxGeometry(8, 8, 6);
+    mapBoxFront(enemyGeometry);
+    this.enemyTextures = Object.fromEntries(Object.keys(ENEMY_COLORS).map((type) => [type, createEnemyTexture(type)]));
     const spikeGeometry = new THREE.ConeGeometry(0.85, 2.6, 4);
     const spikeMaterial = new THREE.MeshStandardMaterial({ color: 0xffd7ac });
     const chestGeometry = new THREE.BoxGeometry(10, 8, 6);
     const crystalGeometry = new THREE.OctahedronGeometry(CRYSTAL_RADIUS, 0);
-    const chestMaterial = new THREE.MeshStandardMaterial({ color: 0xff8a5a, roughness: 0.42, metalness: 0.18 });
+    mapBoxFront(chestGeometry);
+    const chestMaterial = new THREE.MeshStandardMaterial({ map: createChestTexture(), roughness: 0.72 });
     const crystalMaterial = new THREE.MeshStandardMaterial({ color: 0x5ad7ff, emissive: 0x0b5575, emissiveIntensity: 1.6, roughness: 0.22, metalness: 0.25 });
     for (const platform of this.platforms) {
-      const enemyView = new THREE.Mesh(enemyGeometry, new THREE.MeshStandardMaterial({ color: 0x9fcf42, roughness: 0.48, metalness: 0.05 }));
+      const enemyView = new THREE.Mesh(enemyGeometry, new THREE.MeshStandardMaterial({ map: this.enemyTextures.static, roughness: 0.65 }));
       const spikes = new THREE.Group();
       for (const x of [-2.5, 0, 2.5]) {
         const spike = new THREE.Mesh(spikeGeometry, spikeMaterial);
@@ -1203,6 +1209,7 @@ export class ThreeGame {
     while (this.accumulator >= STEP && steps < 16) { this.fixedUpdate(STEP); this.accumulator -= STEP; steps += 1; }
     if (!this.gameOver && !this.choosingCard) this.updatePlayerFacing(Math.min(dt, 0.1));
     if (this.playerMixer) this.playerMixer.update(Math.min(dt, 0.1));
+    this.windLeaves.update(Math.min(dt, 0.1), this.worldHeight);
     this.playerSpeedCounter.textContent = Math.abs(this.player.vx).toFixed(1);
     this.playerMaxSpeedCounter.textContent = String(this.getPlayerHorizontalSpeed());
     this.playerDamageCounter.textContent = String(this.damage + this.cardBonus('damage'));
@@ -1510,7 +1517,7 @@ export class ThreeGame {
     entity.fleeing = false;
     entity.stompUsed = false;
     view.children[0].visible = entity.enemyType === 'spiked';
-    view.material.color.setHex({ static: 0x9fcf42, fleeing: 0x41cfbd, spiked: 0xc45386 }[entity.enemyType]);
+    view.material.map = this.enemyTextures[entity.enemyType];
     view.material.emissive.setHex(0);
     view.castShadow = true;
     entity.platform = platform;

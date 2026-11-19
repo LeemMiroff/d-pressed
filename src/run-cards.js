@@ -1,6 +1,6 @@
 export const CARD_PRICE = 25;
 export const CARD_PRICE_MULTIPLIER = 1.2;
-export const REROLL_PRICE = 2;
+export const REROLL_PRICE = 10;
 
 export const RUN_CARDS = Object.freeze([
   { id: 'magnet', name: 'Магнит', description: (bonus) => `+${bonus} к дальности подбора.`, bonus: 4 },
