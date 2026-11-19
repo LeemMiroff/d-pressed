@@ -8,6 +8,7 @@ import { PlatformGenerator } from './platform-generator.js';
 import { GAME_STATES, GameSession } from './game-session.js';
 import { ENEMY_HIT_FLIGHT_SECONDS, updateCollectibleEntity, updateEnemyEntity } from './entity-systems.js';
 import { CARD_PRICE, CARD_PRICE_MULTIPLIER, REROLL_PRICE, drawRunCards } from './run-cards.js';
+import { PlayerFacing } from './player-facing.js';
 
 const STEP = 1 / 60;
 const PLATFORM_RESERVE = 2;
@@ -68,6 +69,7 @@ export class ThreeGame {
     this.worldHeight = config.world.height;
     this.worldSpeed = config.platforms.initialWorldSpeed;
     this.playerMixer = null;
+    this.playerFacing = new PlayerFacing();
     this.playerRunAction = null;
     this.playerModel = null;
     this.playerModelBounds = null;
@@ -425,15 +427,15 @@ export class ThreeGame {
         -this.player.height / 2 - this.playerModelBounds.min.y * scale,
         -((this.playerModelBounds.min.z + this.playerModelBounds.max.z) / 2) * scale,
       );
-      this.updatePlayerFacing();
+      this.playerModel.rotation.y = this.playerFacing.yaw;
     }
     if (this.playerMixer) this.playerMixer.timeScale = Math.max(0.1, Number(this.config.player.animationSpeed) || 1);
   }
 
-  updatePlayerFacing() {
-    if (!this.playerModel) return;
-    const direction = Math.sign(this.player.vx) || (this.input.held ? 1 : -1);
-    this.playerModel.rotation.y = direction >= 0 ? Math.PI / 2 : -Math.PI / 2;
+  updatePlayerFacing(dt) {
+    const playbackDirection = this.playerFacing.updateForPlayer(dt, this.player, this.input.held);
+    if (this.playerModel) this.playerModel.rotation.y = this.playerFacing.yaw;
+    if (this.playerRunAction) this.playerRunAction.timeScale = playbackDirection;
   }
 
   createHub() {
@@ -1097,6 +1099,7 @@ export class ThreeGame {
   }
 
   rebuildRoute(preserveProgression = true) {
+    this.playerFacing.reset();
     this.attackCooldown = 0;
     this.player.groundedOn = null;
     this.player.vx = 0;
@@ -1195,10 +1198,11 @@ export class ThreeGame {
       this.accumulator = 0;
       dt = 0;
     }
-    if (this.playerMixer) this.playerMixer.update(Math.min(dt, 0.1));
     this.accumulator += Math.min(dt, 0.1);
     let steps = 0;
     while (this.accumulator >= STEP && steps < 16) { this.fixedUpdate(STEP); this.accumulator -= STEP; steps += 1; }
+    if (!this.gameOver && !this.choosingCard) this.updatePlayerFacing(Math.min(dt, 0.1));
+    if (this.playerMixer) this.playerMixer.update(Math.min(dt, 0.1));
     this.playerSpeedCounter.textContent = Math.abs(this.player.vx).toFixed(1);
     this.playerMaxSpeedCounter.textContent = String(this.getPlayerHorizontalSpeed());
     this.playerDamageCounter.textContent = String(this.damage + this.cardBonus('damage'));
@@ -1289,7 +1293,6 @@ export class ThreeGame {
     const turning = this.player.vx !== 0 && Math.sign(this.player.vx) !== direction;
     this.player.vx = moveTowards(this.player.vx, target, (turning ? this.config.player.braking : this.config.player.acceleration) * dt);
     this.player.x = clamp(this.player.x + this.player.vx * dt, 0, this.config.world.width - this.player.width);
-    this.updatePlayerFacing();
   }
 
   getPlayerHorizontalSpeed() {
@@ -1552,7 +1555,8 @@ export class ThreeGame {
     } else {
       enemy.health -= Math.max(1, this.damage + this.cardBonus('damage'));
     }
-    this.attackCooldown = 1 / Math.max(0.5, this.config.player.attacksPerSecond);
+    const attacksPerSecond = Math.max(0.5, this.config.player.attacksPerSecond) + this.cardBonus('attackSpeed');
+    this.attackCooldown = 1 / attacksPerSecond;
     if (enemy.enemyType === 'fleeing' && enemy.health > 0) enemy.fleeing = true;
     enemy.hitFlightTimer = ENEMY_HIT_FLIGHT_SECONDS;
     enemy.view?.material?.emissive?.setHex(0xffd66b);

@@ -66,6 +66,10 @@ test('player attack speed limits hits across different enemies', () => {
   game.fixedUpdate(0.125);
   game.hitEnemy(second);
   assert.equal(second.health, 2);
+  game.cardLevels.attackSpeed = 2;
+  game.fixedUpdate(0.25);
+  game.hitEnemy(first);
+  assert.equal(game.attackCooldown, 1 / 4.5);
 });
 
 test('portal cards charge once and can be skipped without spending crystals', () => {

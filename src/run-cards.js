@@ -8,6 +8,7 @@ export const RUN_CARDS = Object.freeze([
   { id: 'bounty', name: 'Награда за победу', description: (bonus) => `+${bonus} крист. за победу над врагом.`, bonus: 1 },
   { id: 'stomp', name: 'Тяжёлое приземление', description: (bonus) => `+${bonus} к урону при прыжке на голову.`, bonus: 1 },
   { id: 'speed', name: 'Быстрые ноги', description: (bonus) => `+${bonus} к скорости бега.`, bonus: 5 },
+  { id: 'attackSpeed', name: 'Быстрые удары', description: (bonus) => `+${bonus.toLocaleString('ru-RU')} к числу ударов в секунду.`, bonus: 0.25, bonusStep: 0.25 },
 ]);
 
 export function drawRunCards(random, previous = [], settings = {}) {

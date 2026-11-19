@@ -195,7 +195,8 @@ export class ThreeInspector {
         label.append(checkbox, text);
         cardControls.append(label);
       }
-      this.addControl(`cards.${card.id}.bonus`, 'Бонус за уровень', 1, 50, 1, 'cards', card.description(card.bonus));
+      const step = card.bonusStep ?? 1;
+      this.addControl(`cards.${card.id}.bonus`, 'Бонус за уровень', step, 50, step, 'cards', card.description(card.bonus));
     }
     this.root.querySelectorAll('[data-tab]').forEach((tab) => tab.addEventListener('click', () => this.activateTab(tab.dataset.tab)));
     this.root.querySelector('[data-close]').addEventListener('click', () => {
