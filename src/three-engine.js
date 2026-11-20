@@ -17,6 +17,9 @@ import { CliffBackground } from './cliff-background.js';
 import { maximumCliffRecess, ProceduralCliffs } from './procedural-cliffs.js';
 
 const STEP = 1 / 60;
+const PORTAL_CLOSE_TIME = 0.3;
+const PORTAL_OPEN_TIME = 0.34;
+const PORTAL_COVERED_TIME = 0.1;
 const PLATFORM_RESERVE = 2;
 const PLATFORM_SHADOW_LAYER = 2;
 const SHADOW_COVERAGE = Object.freeze({
@@ -130,12 +133,13 @@ export class ThreeGame {
     this.groups = [];
     this.portals = null;
     this.transitionRemaining = 0;
+    this.portalOpening = false;
     this.hubMoving = false;
     this.entities = [];
     this.renderStats = { lastTime: performance.now(), elapsed: 0, frames: 0 };
     this.setRandomSeed();
     this.createBackground();
-    this.proceduralCliffs = new ProceduralCliffs(this.world);
+    this.proceduralCliffs = new ProceduralCliffs(this.world, assets.cliffWear);
     this.windStreaks = new WindStreaks(this.world, this.config.world.width, this.camera);
     this.platformFoliage = assets.platform && assets.foliage
       ? new PlatformFoliage(assets.platform.material, assets.foliage)
@@ -342,7 +346,7 @@ export class ThreeGame {
 
   createBackground() {
     if (this.assets.cliff) {
-      this.cliffBackground = new CliffBackground(this.assets.cliff.geometry, this.config.atmosphere);
+      this.cliffBackground = new CliffBackground(this.assets.cliff.geometry, this.config.atmosphere, this.assets.cliffWear);
       this.world.add(this.cliffBackground.group);
       this.resizeBackgroundWall();
       return;
@@ -759,19 +763,42 @@ export class ThreeGame {
     this.cardPanel.setAttribute('role', 'dialog');
     this.cardPanel.setAttribute('aria-modal', 'true');
     this.cardPanel.setAttribute('aria-label', 'Выбор улучшения');
+    this.cardPanel.addEventListener('keydown', (event) => {
+      const buttons = [...this.cardPanel.querySelectorAll('button:not(:disabled)')];
+      const index = buttons.indexOf(document.activeElement);
+      if (index < 0) return;
+      const direction = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+      const tabEnd = event.key === 'Tab' && (event.shiftKey ? index === 0 : index === buttons.length - 1);
+      if (!direction && !tabEnd) return;
+      event.preventDefault();
+      const step = direction || (event.shiftKey ? -1 : 1);
+      buttons[(index + step + buttons.length) % buttons.length].focus();
+    });
     this.ui.append(this.cardPanel);
+    this.portalCurtain = document.createElement('div');
+    this.portalCurtain.className = 'three-ui__portal-curtain';
+    this.portalCurtain.setAttribute('aria-hidden', 'true');
+    this.portalCurtain.hidden = true;
+    this.ui.append(this.portalCurtain);
   }
 
   openCardChoice() {
+    const firstOffer = !this.choosingCard;
+    if (firstOffer) this.cardReturnFocus = document.activeElement;
     this.choosingCard = true;
+    this.cardPanel.removeAttribute('aria-busy');
     const cost = this.getRunCardPrice();
     const offers = drawRunCards(() => this.cardRng.next(), this.cardOffers, this.config.cards);
     this.cardOffers = offers;
-    this.cardPanel.innerHTML = '<h2>Выбери улучшение</h2>';
+    this.cardPanel.innerHTML = '';
     const balance = document.createElement('div');
-    balance.textContent = `Кристаллов: ${this.crystalCount}`;
+    balance.textContent = this.crystalCount;
+    balance.setAttribute('aria-label', `Кристаллов: ${this.crystalCount}`);
     balance.className = 'three-ui__card-balance';
     this.cardPanel.append(balance);
+    const heading = document.createElement('h2');
+    heading.textContent = 'Выбери улучшение';
+    this.cardPanel.append(heading);
     const row = document.createElement('div');
     row.className = 'three-ui__card-row';
     this.cardPanel.append(row);
@@ -780,66 +807,112 @@ export class ThreeGame {
       button.type = 'button';
       button.className = 'three-ui__card';
       button.dataset.card = card.id;
+      button.setAttribute('aria-pressed', 'false');
       const icon = document.createElement('span');
       icon.className = 'three-ui__card-icon';
       icon.setAttribute('aria-hidden', 'true');
       const title = document.createElement('strong');
-      title.textContent = card.name;
-      const description = document.createElement('span');
-      description.textContent = card.description(this.config.cards[card.id].bonus);
+      title.textContent = ({ damage: 'Урон', bounty: 'Бонус за победу', stomp: 'Урон сверху', speed: 'Скорость', attackSpeed: 'Темп ударов' })[card.id] ?? card.name;
+      const setting = this.config.cards[card.id];
+      const bonus = this.cardBonus(card.id);
+      const nextBonus = Math.max((this.cardLevels[card.id] || 0) + 1, Number(setting.grantImmediately)) * setting.bonus;
+      const gain = nextBonus - bonus;
+      const current = this.getRunCardStat(card.id);
+      const format = (value) => value.toLocaleString('ru-RU', { maximumFractionDigits: 2 });
+      const increment = document.createElement('span');
+      increment.className = 'three-ui__card-gain';
+      increment.textContent = `+${format(gain)}`;
+      const stat = document.createElement('span');
+      stat.className = 'three-ui__card-stat';
+      stat.textContent = `${format(current)} → ${format(current + gain)}`;
+      button.setAttribute('aria-label', `${card.name}. ${card.description(gain)} ${stat.textContent}. Цена ${cost} кристаллов.`);
       const price = document.createElement('span');
       price.className = 'three-ui__card-price';
-      price.textContent = `◆ ${cost}`;
+      price.textContent = cost;
       price.setAttribute('aria-label', `${cost} кристаллов`);
-      button.append(icon, title, description, price);
+      button.append(icon, title, increment, stat, price);
       button.disabled = this.crystalCount < cost;
       button.addEventListener('click', () => {
-        if (this.cardOffers === offers) this.chooseRunCard(card);
+        if (this.cardOffers !== offers) return;
+        const remaining = this.crystalCount - cost;
+        this.animateCardChoice(() => this.chooseRunCard(card), button, remaining >= this.getRunCardPrice(1));
       });
       row.append(button);
     }
     const skip = document.createElement('button');
     skip.type = 'button';
     skip.className = 'three-ui__card-skip';
-    skip.textContent = 'Продолжить без покупки';
-    skip.addEventListener('click', () => this.chooseRunCard());
+    skip.textContent = 'Пропустить';
+    skip.addEventListener('click', () => {
+      if (!this.cardPanel.hasAttribute('aria-busy')) this.chooseRunCard();
+    });
     const actions = document.createElement('div');
     actions.className = 'three-ui__card-actions';
     const reroll = document.createElement('button');
     reroll.type = 'button';
     reroll.className = 'three-ui__card-skip';
-    reroll.textContent = `Реролл · ◆ ${REROLL_PRICE}`;
+    reroll.textContent = `Обновить · ◆ ${REROLL_PRICE}`;
     reroll.disabled = this.crystalCount < REROLL_PRICE || this.enabledCardCount() <= 3;
     reroll.addEventListener('click', () => {
-      if (this.cardOffers === offers) this.rerollRunCards();
+      if (this.cardOffers === offers) this.animateCardChoice(() => this.rerollRunCards(), null, true);
     });
     actions.append(reroll, skip);
     this.cardPanel.append(actions);
     this.cardPanel.hidden = false;
     this.positionCardChoice();
-    this.cardPanel.querySelector('button:not(:disabled)').focus();
+    if (firstOffer && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      this.cardPanel.animate([
+        { opacity: 0, transform: 'translateY(calc(-50% + 11px))' },
+        { opacity: 1, transform: 'translateY(-50%)' },
+      ], { duration: 290, easing: 'ease-out' });
+    }
+    this.cardPanel.querySelector('button:not(:disabled)')?.focus({ preventScroll: true });
+  }
+
+  getRunCardStat(id) {
+    if (id === 'speed') return this.getPlayerHorizontalSpeed();
+    const base = id === 'damage' ? this.damage : id === 'attackSpeed' ? Math.max(0.5, this.config.player.attacksPerSecond) : 0;
+    return base + this.cardBonus(id);
+  }
+
+  async animateCardChoice(apply, selected, refresh) {
+    const panel = this.cardPanel;
+    if (panel.hasAttribute('aria-busy')) return;
+    const offers = this.cardOffers;
+    panel.setAttribute('aria-busy', 'true');
+    selected?.setAttribute('aria-pressed', 'true');
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (selected && !reduced) await new Promise((resolve) => setTimeout(resolve, 180));
+    if (this.cardOffers !== offers) return;
+    if (refresh && !reduced) {
+      const cards = [...panel.querySelectorAll('.three-ui__card')];
+      await Promise.all(cards.map((card) => card.animate([{ transform: 'rotateY(0deg)' }, { transform: 'rotateY(90deg)' }],
+        { duration: 160, easing: 'ease-in', fill: 'forwards' }).finished.catch(() => {})));
+    }
+    if (this.cardOffers !== offers) return;
+    panel.removeAttribute('aria-busy');
+    apply();
+    if (refresh && !reduced && this.choosingCard && this.cardOffers !== offers) {
+      const newOffers = this.cardOffers;
+      panel.setAttribute('aria-busy', 'true');
+      const cards = [...panel.querySelectorAll('.three-ui__card')];
+      await Promise.all(cards.map((card) => card.animate([{ transform: 'rotateY(-90deg)' }, { transform: 'rotateY(0deg)' }],
+        { duration: 185, easing: 'ease-out' }).finished.catch(() => {})));
+      if (this.cardOffers === newOffers) panel.removeAttribute('aria-busy');
+    }
   }
 
   positionCardChoice() {
     if (!this.choosingCard) return;
     const viewport = this.canvas.getBoundingClientRect();
-    this.camera.updateMatrixWorld();
-    const visualHeight = this.config.player.visualHeight * this.config.player.visualScale;
-    const anchor = new THREE.Vector3(
-      this.config.world.width / 2,
-      this.logicalY(this.hub.y) + visualHeight * 1.5,
-      0,
-    ).project(this.camera);
     this.cardPanel.style.left = `${viewport.left}px`;
     this.cardPanel.style.width = `${viewport.width}px`;
-    const anchorY = viewport.top + (1 - anchor.y) * viewport.height / 2;
-    const panelBottom = Math.max(anchorY, viewport.top + this.cardPanel.offsetHeight + 8);
-    this.cardPanel.style.bottom = `${window.innerHeight - panelBottom}px`;
+    this.cardPanel.style.top = `${viewport.top + viewport.height / 2}px`;
   }
 
-  getRunCardPrice() {
+  getRunCardPrice(additionalPurchases = 0) {
     const purchases = Object.values(this.cardLevels).reduce((total, level) => total + level, 0);
-    return Math.round(CARD_PRICE * CARD_PRICE_MULTIPLIER ** purchases);
+    return Math.round(CARD_PRICE * CARD_PRICE_MULTIPLIER ** (purchases + additionalPurchases));
   }
 
   chooseRunCard(card) {
@@ -868,7 +941,12 @@ export class ThreeGame {
   closeCardChoice() {
     this.choosingCard = false;
     this.cardOffers = [];
-    if (this.cardPanel) this.cardPanel.hidden = true;
+    if (this.cardPanel) {
+      this.cardPanel.hidden = true;
+      this.cardPanel.removeAttribute('aria-busy');
+      if (this.cardReturnFocus?.isConnected) this.cardReturnFocus.focus({ preventScroll: true });
+      this.cardReturnFocus = null;
+    }
     this.input.held = false;
   }
 
@@ -1208,6 +1286,8 @@ export class ThreeGame {
     this.closeCardChoice();
     this.input.held = false;
     this.transitionRemaining = 0;
+    this.portalOpening = false;
+    this.setPortalCurtain(0);
     if (!preserveProgression) {
       this.setRandomSeed();
       this.difficultyTime = 0;
@@ -1299,12 +1379,19 @@ export class ThreeGame {
   }
 
   enterHubFromPortal() {
-    this.transitionRemaining = 0;
     this.rebuildRoute(true);
     this.enterHub();
-    this.openCardChoice();
+    this.portalOpening = true;
+    this.transitionRemaining = PORTAL_OPEN_TIME + PORTAL_COVERED_TIME;
     this.resetRenderInterpolation();
     this.applyAllViews();
+  }
+
+  setPortalCurtain(coverage) {
+    if (!this.portalCurtain) return;
+    const amount = clamp(coverage, 0, 1);
+    this.portalCurtain.hidden = amount === 0;
+    this.portalCurtain.style.setProperty('--curtain-offset', `${(1 - amount * amount * (3 - 2 * amount)) * 100}%`);
   }
 
   exitHub() {
@@ -1377,6 +1464,23 @@ export class ThreeGame {
   fixedUpdate(dt) {
     if (this.gameOver || this.choosingCard) return;
     this.attackCooldown = Math.max(0, this.attackCooldown - dt);
+    if (this.portalOpening || this.mode === GAME_STATES.TRANSITION) {
+      this.transitionRemaining = Math.max(0, this.transitionRemaining - dt);
+      if (this.portalOpening) {
+        this.setPortalCurtain(this.transitionRemaining / PORTAL_OPEN_TIME);
+        if (this.transitionRemaining <= 1e-8) {
+          this.portalOpening = false;
+          this.openCardChoice();
+        }
+      } else {
+        this.setPortalCurtain(1 - this.transitionRemaining / PORTAL_CLOSE_TIME);
+        if (this.transitionRemaining <= 1e-8) {
+          this.setPortalCurtain(1);
+          this.enterHubFromPortal();
+        }
+      }
+      return;
+    }
     this.captureRenderState();
     if (this.mode === 'hub') {
       this.updateHorizontal(dt);
@@ -1386,11 +1490,6 @@ export class ThreeGame {
       // Start the run only after the player has completely crossed its edge.
       if (this.player.x >= this.hub.x + this.hub.width) this.exitHub();
       this.applyAllViews();
-      return;
-    }
-    if (this.mode === 'transition') {
-      this.transitionRemaining = Math.max(0, this.transitionRemaining - dt);
-      if (this.transitionRemaining === 0) this.enterHubFromPortal();
       return;
     }
     this.difficultyTime += dt;
@@ -1914,13 +2013,12 @@ export class ThreeGame {
   }
 
   checkPortalEntry() {
-    if (!this.portals) return;
+    if (this.mode !== GAME_STATES.RUN || !this.portals) return;
     const entered = this.portals.some((portal) => overlap(this.player, { x: portal.platform.x + (portal.side ? portal.platform.width - 4 : 0), y: portal.platform.y - 10, width: 4, height: 10 }));
     if (entered) {
-      this.clearPortals();
       this.setMode(GAME_STATES.TRANSITION);
       this.input.held = false;
-      this.transitionRemaining = 0.25;
+      this.transitionRemaining = PORTAL_CLOSE_TIME;
     }
   }
 

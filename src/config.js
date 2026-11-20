@@ -2,7 +2,7 @@ import { RUN_CARDS } from './run-cards.js';
 
 export const CLIFF_LIMITS = Object.freeze({ minScale: 0.7, maxScale: 1.45, minGap: -20, maxGap: 100, maxSpeed: 2 });
 export const SUPPORT_SCALE_LIMITS = Object.freeze({ min: 0.6, max: 2.6 });
-export const FOLIAGE_WIND_LIMITS = Object.freeze({ maxStrength: 4, maxSpeed: 3 });
+export const FOLIAGE_WIND_LIMITS = Object.freeze({ maxStrength: 12, maxSpeed: 9, maxSway: 3, maxGustiness: 3 });
 
 export const CONFIG = Object.freeze({
   cards: Object.fromEntries(RUN_CARDS.map(({ id, bonus }) => [id, { enabled: true, grantImmediately: false, bonus }])),
@@ -195,6 +195,8 @@ export const CONFIG = Object.freeze({
     facetSize: 24,
     facetStretch: 1.45,
     fractureStrength: 0.58,
+    middleContourSpread: 1,
+    backContourSpread: 1,
     recessDepth: 1,
     mountBlend: 1,
   },

@@ -9,20 +9,27 @@ import splitPillar from '../public/models/stone-study/support-split-pillar.glb?u
 import brokenTerrace from '../public/models/stone-study/support-broken-terrace.glb?url&inline';
 import foliageAtlas from '../public/assets/platform-foliage/foliage-atlas.png?url&inline';
 import grassNoise from '../public/assets/platform-foliage/grass-noise.png?url&inline';
+import rockWear from '../public/assets/stone/rock-wear.png?url&inline';
 import { ThreeGame, loadThreeConfig } from './three-engine.js';
 import { ThreeInspector } from './three-inspector.js';
 import { loadStonePlatform } from './stone-platform.js';
 import { loadStoneGeometry } from './stone-geometry.js';
 import { loadPlatformSupports } from './platform-supports.js';
 import { loadPlatformFoliage } from './platform-foliage.js';
+import { loadCliffWear } from './cliff-surface.js';
 
 async function start() {
   const mount = document.querySelector('#app');
   const canvas = document.createElement('canvas');
   canvas.setAttribute('aria-label', 'Игровое поле');
   mount.append(canvas);
-  const [config, platform, cliff, supports, foliage] = await Promise.all([
+  const cliffWearReady = loadCliffWear(rockWear).catch((error) => {
+    console.warn('D-PRESSED cliff wear texture failed to load', error);
+    return null;
+  });
+  const [config, cliffWear, platform, cliff, supports, foliage] = await Promise.all([
     loadThreeConfig(),
+    cliffWearReady,
     loadStonePlatform(stonePlatform).catch((error) => {
       console.warn('D-PRESSED stone platform failed to load, using fallback boxes', error);
       return null;
@@ -31,7 +38,7 @@ async function start() {
       console.warn('D-PRESSED cliff background failed to load, using brick wall', error);
       return null;
     }),
-    loadPlatformSupports([lowSpur, splitPillar, brokenTerrace]).catch((error) => {
+    loadPlatformSupports([lowSpur, splitPillar, brokenTerrace], cliffWearReady).catch((error) => {
       console.warn('D-PRESSED platform supports failed to load', error);
       return null;
     }),
@@ -40,7 +47,7 @@ async function start() {
       return null;
     }),
   ]);
-  const game = new ThreeGame(canvas, config, { wall, model, character, platform, cliff, supports, foliage });
+  const game = new ThreeGame(canvas, config, { wall, model, character, platform, cliff, supports, foliage, cliffWear });
   const inspector = new ThreeInspector(config, game);
   let pointerId = null;
   const setHeld = (held) => { game.input.held = held; };

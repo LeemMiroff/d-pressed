@@ -9,7 +9,10 @@ const atlasWidth = 1024;
 const atlasHeight = 512;
 const plantScale = 1.5;
 const plantEdgeInset = 0.04;
-const maxBendAngle = 1.4;
+const bendPerStrength = 0.35;
+const softBendStart = 1.4;
+const extraBendRange = 0.7;
+const maxBendAngle = softBendStart + extraBendRange;
 const fullTurn = Math.PI * 2;
 const grassTileWidth = 116;
 const grassTileDepth = 28;
@@ -270,10 +273,13 @@ export class PlatformFoliage {
         float cycle = foliageWindPhase + plantWind.z * 0.5;
         float sway = 0.215 * sin(2.0 * cycle - lag) + 0.055 * sin(3.0 * cycle - lag * 1.3 + 0.7);
         float gust = 0.5 + 0.5 * sin(cycle - lag * 0.45 + 0.6);
-        // Continuous sway persists between slower gusts. Pressure stays within bounds without clipping.
         float pressure = 0.47 + foliageWindSway * sway + 0.26 * foliageWindGustiness * gust * gust;
-        float bend = foliageWindStrength * ${maxBendAngle / FOLIAGE_WIND_LIMITS.maxStrength}
-          * pressure * mix(0.68, 1.0, hanging) * plantWind.y;
+        // Ease extreme values into the bend limit without flattening the peaks.
+        float positivePressure = 0.5 * (pressure + sqrt(pressure * pressure + 0.0025));
+        float rawBend = foliageWindStrength * ${bendPerStrength}
+          * positivePressure * mix(0.68, 1.0, hanging) * plantWind.y;
+        float excess = max(0.0, rawBend - ${softBendStart});
+        float bend = rawBend - excess + excess / (1.0 + excess / ${extraBendRange});
         float bendSquared = bend * bend;
         // Circular arc offsets keep the tips lifting as they swing, with a fixed root.
         float sideways = bend * (0.5 - bendSquared * (1.0 / 24.0 - bendSquared / 720.0));
@@ -287,8 +293,8 @@ export class PlatformFoliage {
   setWind({ enabled, strength, speed, sway, gustiness }) {
     this.windStrength.value = enabled ? Math.max(0, Math.min(FOLIAGE_WIND_LIMITS.maxStrength, strength)) : 0;
     this.windSpeed = Math.max(0, Math.min(FOLIAGE_WIND_LIMITS.maxSpeed, speed));
-    this.windSway.value = Math.max(0, Math.min(1, sway));
-    this.windGustiness.value = Math.max(0, Math.min(1, gustiness));
+    this.windSway.value = Math.max(0, Math.min(FOLIAGE_WIND_LIMITS.maxSway, sway));
+    this.windGustiness.value = Math.max(0, Math.min(FOLIAGE_WIND_LIMITS.maxGustiness, gustiness));
   }
 
   update(dt) {

@@ -1,4 +1,5 @@
 import { BufferGeometry, Float32BufferAttribute, Group, Mesh, MeshStandardMaterial, ShapeUtils, Vector2, Vector3 } from 'three';
+import { addCliffSurfaceAttributes, applyCliffWear } from './cliff-surface.js';
 
 const SECTION_HEIGHT = 150;
 const ROCK_RELIEF = 3;
@@ -46,6 +47,19 @@ function meshHeight(x, y, width, seed, origin) {
   return y - seamOffset(x, width, seed, origin);
 }
 
+function rockMass(y, seed) {
+  // Large masses of unequal height separated by recesses. The short edge of
+  // each mass is where the smaller fractures cluster.
+  const span = 168;
+  const slot = Math.floor(y / span);
+  const t = y / span - slot;
+  const start = mix(0.04, 0.22, noise(seed, slot ^ 781));
+  const end = mix(0.62, 0.98, noise(seed, slot ^ 431));
+  const rise = smooth(clamp((t - start) / 0.23, 0, 1));
+  const fall = smooth(clamp((end - t) / 0.15, 0, 1));
+  return rise * fall * mix(0.65, 1, noise(seed, slot ^ 314));
+}
+
 function profile(y, width, settings, seed, origin) {
   const phase = noise(seed, 712) * Math.PI * 2;
   const center = width * (0.5 + 0.15 * Math.sin(y / 116 + phase) + 0.08 * Math.sin(y / 48 - phase));
@@ -54,8 +68,12 @@ function profile(y, width, settings, seed, origin) {
   const variation = 0.91 + 0.19 * Math.sin(y / 69 + phase) + 0.11 * Math.sin(y / 29 - phase);
   const gap = width * (0.29 + opening * 0.75) * (1.32 - coverage * 0.55) * variation;
   const irregularity = mix(0.42, 1.42, clamp(settings.fractureStrength ?? 0.58, 0, 1));
-  const leftBreak = width * (0.16 * fracture(y, 35, seed ^ 149) + 0.14 * fracture(y, 69, seed ^ 635)) * irregularity;
-  const rightBreak = width * (0.18 * fracture(y + 24, 39, seed ^ 852) + 0.11 * fracture(y, 82, seed ^ 117)) * irregularity;
+  const massLeft = rockMass(y - origin, seed ^ 649);
+  const massRight = rockMass(y - origin + 61, seed ^ 929);
+  const leftBreak = width * (0.11 * fracture(y, 35, seed ^ 149) + 0.14 * fracture(y, 69, seed ^ 635)
+    + 0.105 * (massLeft - 0.42)) * irregularity;
+  const rightBreak = width * (0.12 * fracture(y + 24, 39, seed ^ 852) + 0.11 * fracture(y, 82, seed ^ 117)
+    - 0.105 * (massRight - 0.42)) * irregularity;
   const localY = y - origin - 35;
   const interval = Math.floor(localY / BREAK_INTERVAL);
   const middle = (interval + 0.5) * BREAK_INTERVAL + (noise(seed, interval ^ 591) - 0.5) * 20;
@@ -73,9 +91,9 @@ function bridgeFor(section, start, seed) {
   const slot = block === 0 ? 0 : Math.floor(noise(seed, block ^ 842) * 2);
   if (section !== block * 3 + slot) return null;
   const top = start + 28 + noise(seed, section + 301) * 12;
-  const high = [top, top + 27 + noise(seed, section + 811) * 10];
-  const lowTop = top + 19 + noise(seed, section + 931) * 12;
-  const low = [lowTop, lowTop + 18 + noise(seed, section + 897) * 10];
+  const high = [top, top + 36 + noise(seed, section + 811) * 9];
+  const lowTop = top + 19 + noise(seed, section + 931) * 10;
+  const low = [lowTop, lowTop + 26 + noise(seed, section + 897) * 8];
   return noise(seed, section ^ 317) < 0.5 ? { left: high, right: low } : { left: low, right: high };
 }
 
@@ -189,8 +207,11 @@ function triangulateShoulder(left, right, surfacePoint) {
 }
 
 function contourFraction([high, middle, low], y) {
-  if (y < middle) return 0.5 * clamp((y - high) / (middle - high), 0, 1);
-  return 0.5 + 0.5 * clamp((y - middle) / (low - middle), 0, 1);
+  const linear = y < middle
+    ? 0.5 * clamp((y - high) / (middle - high), 0, 1)
+    : 0.5 + 0.5 * clamp((y - middle) / (low - middle), 0, 1);
+  // Spread the bridge into the banks while keeping the contour monotone.
+  return mix(linear, smooth(linear), 0.38);
 }
 
 function sectionContours(start, section, seed) {
@@ -199,8 +220,9 @@ function sectionContours(start, section, seed) {
   const leftIsHigh = bridge.left[0] < bridge.right[0];
   const high = leftIsHigh ? bridge.left : bridge.right;
   const low = leftIsHigh ? bridge.right : bridge.left;
-  const upper = [high[0], mix(high[0], low[0], 0.5) - 4, low[0]];
-  const lower = [high[1], mix(high[1], low[1], 0.5) + Math.min(2, (low[1] - high[1]) * 0.25), low[1]];
+  const shoulder = noise(seed ^ 1831, section);
+  const upper = [high[0], mix(high[0], low[0], mix(0.28, 0.48, shoulder)), low[0]];
+  const lower = [high[1], mix(high[1], low[1], mix(0.68, 0.47, shoulder)), low[1]];
   return { bridge, leftIsHigh, upper, lower };
 }
 
@@ -363,6 +385,8 @@ export function buildCliffSection(start, end, ledges, worldWidth, settings, seed
   const outerRight = worldWidth * 1.30;
   const positions = [];
   const normals = [];
+  const facetIds = [];
+  const facetGroups = new Map();
   const vertexIds = new Map();
   const edges = new Map();
   const warped = new Map();
@@ -392,6 +416,8 @@ export function buildCliffSection(start, end, ledges, worldWidth, settings, seed
     edgeB.set(third[0] - first[0], third[1] - first[1], third[2] - first[2]);
     normal.crossVectors(edgeA, edgeB).normalize();
     const planar = points.length === 4 || Boolean(plane);
+    const facet = planar && recessLevel === 0 ? plane ?? face : null;
+    if (facet && !facetGroups.has(facet)) facetGroups.set(facet, facetGroups.size + 1);
     if (planar && recessLevel === 0) frontPanels.add(plane ?? face);
     if (!planar && recessLevel === 0 && points.every((point) => topDistance(point) >= 0 && bottomDistance(point) >= 0)) {
       const length = Math.max(edgeA.x ** 2 + edgeA.y ** 2, edgeB.x ** 2 + edgeB.y ** 2, (edgeA.x - edgeB.x) ** 2 + (edgeA.y - edgeB.y) ** 2);
@@ -403,6 +429,7 @@ export function buildCliffSection(start, end, ledges, worldWidth, settings, seed
     if (points.some((point) => topDistance(point) < 0)) corners = clipFace(corners, topDistance);
     if (points.some((point) => bottomDistance(point) < 0)) corners = clipFace(corners, bottomDistance);
     for (let i = 1; i < corners.length - 1; i += 1) {
+      facetIds.push(facetGroups.get(facet) ?? 0);
       for (const point of [corners[0], corners[i], corners[i + 1]]) {
         positions.push(...point);
         normals.push(normal.x, normal.y, normal.z);
@@ -446,14 +473,35 @@ export function buildCliffSection(start, end, ledges, worldWidth, settings, seed
       let width = Infinity;
       for (let i = first; i <= last; i += 1) width = Math.min(width, (rim[i][0] - outer) * direction);
       const t = fracture(y, pitch * 1.4, seed ^ (bank + 976));
-      const spine = outer + direction * width * (0.43 + t * 0.29);
-      const shoulder = outer + direction * width * (0.78 + t * 0.12);
+      const mass = rockMass(y - origin + bank * 61, seed ^ (bank ? 929 : 649));
+      const spine = outer + direction * width * (0.39 + t * 0.36 + mass * 0.18);
+      const shoulder = outer + direction * width * (0.78 + t * 0.23);
       const lateral = [(outer - spine) * faceStrips[0], 0, (shoulder - spine) * faceStrips[1]];
-      const relief = mix(5, 22, detail) * fracture(y, pitch * 0.85, seed ^ (bank + 720));
+      const relief = mix(5, 22, detail) * (0.76 * fracture(y, pitch * 0.85, seed ^ (bank + 720)) + 0.24 * (mass - 0.4));
       const spineDepth = Math.min(ROCK_RELIEF - Math.max(...lateral), -1.7 + relief);
-      return [outer, spine, shoulder].map((x, lane) => [x, start - y, spineDepth + lateral[lane]]);
+      const skew = (2 * noise(seed ^ (bank + 1582), Math.round((y - origin) * 64)) - 1) * pitch * 0.07;
+      return [outer, spine, shoulder].map((x, lane) => [x, start - y + (lane === 1 ? skew : 0), spineDepth + lateral[lane]]);
     });
     const shoulderPlanes = new Map();
+    const outerPlanes = new Map();
+    // Some outer facets span two ribs. The subdivision at the middle rib
+    // remains in place so it can meet the smaller neighboring faces.
+    for (let index = 1; index < ribs.length - 1; index += 1) {
+      const row = Math.round((panels[index] - origin) / pitch);
+      if (row % 3 !== 0 || noise(seed ^ (bank + 347), row) < 0.25) continue;
+      const a = ribs[index - 1];
+      const middle = ribs[index];
+      const b = ribs[index + 1];
+      const t = (panels[index] - panels[index - 1]) / (panels[index + 1] - panels[index - 1]);
+      for (let column = 0; column < 2; column += 1) {
+        middle[column][0] = mix(a[column][0], b[column][0], t);
+        middle[column][1] = mix(a[column][1], b[column][1], t);
+        middle[column][2] = mix(a[column][2], b[column][2], t);
+      }
+      const plane = isLeft ? [a[0], b[0], b[1]] : [b[1], b[0], a[0]];
+      outerPlanes.set(index, plane);
+      outerPlanes.set(index + 1, plane);
+    }
     const faces = [];
     for (let index = 1; index < ribs.length; index += 1) {
       const a = ribs[index - 1][2];
@@ -472,6 +520,7 @@ export function buildCliffSection(start, end, ledges, worldWidth, settings, seed
       for (let lane = 0; lane < 2; lane += 1) {
         const face = [above[lane], below[lane], below[lane + 1], above[lane + 1]];
         faces.push(isLeft ? face : face.reverse());
+        if (lane === 0 && outerPlanes.has(index)) shoulderPlanes.set(face, outerPlanes.get(index));
       }
       const rimRun = rim.slice(indices.get(panels[index - 1]), indices.get(panels[index]) + 1);
       const guide = [above[2], below[2]];
@@ -493,6 +542,9 @@ export function buildCliffSection(start, end, ledges, worldWidth, settings, seed
     let previous = null;
     const first = indices.get(upperContour[0]);
     const last = indices.get(lowerContour[2]);
+    const slope = mix(-0.42, 0.42, noise(seed, section ^ 1939));
+    const boundary = mix(0.35, 0.62, noise(seed ^ 2197, section));
+    const facets = [[], []];
     for (let index = first; index <= last; index += 1) {
       const y = uniqueCuts[index];
       const lower = contourFraction(lowerContour, y);
@@ -500,30 +552,60 @@ export function buildCliffSection(start, end, ledges, worldWidth, settings, seed
       const [from, to] = leftIsHigh ? [lower, upper] : [1 - upper, 1 - lower];
       const left = leftRim[index];
       const right = rightRim[index];
-      const span = (right[0] - left[0]) * (to - from);
-      const cells = span > 0 ? Math.max(1, Math.round(span / size)) : 0;
-      const row = Array.from({ length: cells + 1 }, (_, column) => {
-        const t = cells === 0 || column === 0 ? from : column === cells ? to : mix(from, to, column / cells);
+      const across = right[0] - left[0];
+      const crest = boundary + 0.20 * fracture(y - start, 22, seed ^ 641);
+      let cut = clamp(crest, from, to);
+      if ((cut - from) * across < 2) cut = from;
+      if ((to - cut) * across < 2 && cut !== from) cut = to;
+      const makePoint = (t) => {
         if (t === 0) return left;
         if (t === 1) return right;
         const x = mix(left[0], right[0], t);
-        const fold = 1 - Math.abs(2 * t - 1);
-        return [x, start - y, mix(left[2], right[2], t) - fold * 0.65];
-      });
-      bridgeRows.set(index, [row[0], row.at(-1)]);
-      if (previous) triangulateStrip(previous, row, surfacePoint, (a, b, c) => frontFace([a, b, c]));
+        const fold = Math.min(t / crest, (1 - t) / (1 - crest)) * (1 + slope * (2 * t - 1));
+        const slenderEnd = leftIsHigh ? t : 1 - t;
+        const relief = mix(1.25, 2.2 + 3.4 * slenderEnd, detail);
+        return [x, start - y, mix(left[2], right[2], t) - fold * relief];
+      };
+      const leftEdge = makePoint(from);
+      const rightEdge = from === to ? leftEdge : makePoint(to);
+      const crease = cut === from ? leftEdge : cut === to ? rightEdge : makePoint(cut);
+      const row = [
+        crease === leftEdge ? [crease] : [leftEdge, crease],
+        crease === rightEdge ? [crease] : [crease, rightEdge],
+      ];
+      bridgeRows.set(index, [leftEdge, rightEdge]);
+      if (previous) {
+        for (let facet = 0; facet < 2; facet += 1) {
+          triangulateStrip(previous[facet], row[facet], surfacePoint, (a, b, c) => facets[facet].push([a, b, c]));
+        }
+      }
       previous = row;
+    }
+    // Share the lighting of the dominant plane across the triangles in each facet.
+    // Keep the original rim vertices so the bridge and the banks still join exactly.
+    for (const faces of facets) {
+      let plane;
+      let largestArea = 0;
+      for (const face of faces) {
+        const area = projectedArea(...face.map(surfacePoint));
+        if (area <= largestArea) continue;
+        plane = face;
+        largestArea = area;
+      }
+      for (const face of faces) frontFace(face, plane);
     }
   }
 
   const onOuterEdge = ([x]) => x === outerLeft || x === outerRight;
   const rims = [...edges.values()].filter(([a, b]) => a[1] !== b[1] || (a[1] !== start - panels[0] && a[1] !== start - panels.at(-1)));
   const openingRows = new Map();
-  const pairOpening = (left, right, shiftY, insetVariation) => {
+  const middleSpread = clamp(settings.middleContourSpread ?? 1, 0, 2);
+  const backSpread = clamp(settings.backContourSpread ?? 1, 0, 2);
+  const pairOpening = (left, right, rowShape) => {
     const width = right[0] - left[0];
     if (width <= 0) return;
-    openingRows.set(left, [width, shiftY, insetVariation]);
-    openingRows.set(right, [-width, shiftY, insetVariation]);
+    openingRows.set(left, { span: width, ...rowShape });
+    openingRows.set(right, { span: -width, ...rowShape });
   };
   for (let i = 0; i < uniqueCuts.length; i += 1) {
     const height = uniqueCuts[i];
@@ -531,14 +613,19 @@ export function buildCliffSection(start, end, ledges, worldWidth, settings, seed
     // Use the same world row on both sides of a streamed seam. Limit movement
     // by the nearest row so short facets keep their original order.
     const key = Math.round((height - origin) * 64);
-    const shiftY = (2 * noise(seed ^ 1259, key) - 1) * Math.min(3.5, spacing * 0.23) * detail;
-    const insetVariation = (2 * noise(seed ^ 2767, key) - 1) * 0.88 * detail;
+    const shiftY = (2 * noise(seed ^ 1259, key) - 1)
+      * Math.min(3.5 * detail * middleSpread, spacing * Math.min(0.44, 0.23 * detail * middleSpread));
+    const insetVariation = (2 * noise(seed ^ 2767, key) - 1) * Math.min(0.98, 0.88 * detail * middleSpread);
+    const backShiftY = (2 * noise(seed ^ 4319, key) - 1)
+      * Math.min(4.5 * detail * backSpread, spacing * Math.min(0.44, 0.27 * detail * backSpread));
+    const backVariation = 2 * fracture(height - origin, 28, seed ^ 9137) * Math.min(1.5, detail * backSpread);
+    const rowShape = { shiftY, insetVariation, backShiftY, backVariation };
     const bridgeRow = bridgeRows.get(i);
     if (bridgeRow) {
-      pairOpening(leftRim[i], bridgeRow[0], shiftY, insetVariation);
-      pairOpening(bridgeRow[1], rightRim[i], shiftY, insetVariation);
+      pairOpening(leftRim[i], bridgeRow[0], rowShape);
+      pairOpening(bridgeRow[1], rightRim[i], rowShape);
     } else {
-      pairOpening(leftRim[i], rightRim[i], shiftY, insetVariation);
+      pairOpening(leftRim[i], rightRim[i], rowShape);
     }
   }
 
@@ -546,14 +633,18 @@ export function buildCliffSection(start, end, ledges, worldWidth, settings, seed
   const depthPhase = noise(seed, 1833) * Math.PI * 2;
   for (const point of new Set(rims.flat())) {
     const [x, y, z] = point;
-    const [span = 0, shiftY = 0, insetVariation = 0] = openingRows.get(point) ?? [];
+    const { span = 0, shiftY = 0, insetVariation = 0, backShiftY = 0, backVariation = 0 } = openingRows.get(point) ?? {};
     const gap = Math.abs(span);
     const direction = Math.sign(span);
     const height = start - y;
     const cut = fracture(height + x * 0.52, 29, seed ^ 591);
     const targetDepth = worldWidth * (RECESS_DEPTH + cut * RECESS_VARIATION) * recessScale;
     const drop = Math.max(worldWidth * MIN_RETURN_DEPTH, z + targetDepth);
-    const bevelInset = Math.min(worldWidth * 0.033, gap * 0.12);
+    const shoulder = fracture(height + x * 0.31, 36, seed ^ 3319);
+    const mass = rockMass(height - origin + (direction < 0 ? 61 : 0), seed ^ (direction < 0 ? 929 : 649));
+    const chipZone = 4 * mass * (1 - mass);
+    const chips = 2 * fracture(height, 21, seed ^ 563) * chipZone * detail;
+    const bevelInset = Math.min(worldWidth * 0.033, gap * 0.12) * (1 + 0.40 * shoulder + 0.24 * chips);
     const nominalFoldInset = Math.min(worldWidth * 0.063, gap * 0.24);
     const backInset = Math.min(worldWidth * 0.088, gap * 0.34);
     const insetRange = insetVariation < 0 ? nominalFoldInset - bevelInset : backInset - nominalFoldInset;
@@ -562,9 +653,11 @@ export function buildCliffSection(start, end, ledges, worldWidth, settings, seed
       * (0.55 * Math.sin(height / 48 + depthPhase) + 0.9 * fracture(height + x * 0.34, 76, seed ^ 817));
 
     // Both ends of an opening move inward by the same amount along its row.
-    const bevel = [x + direction * bevelInset, y, z - Math.min(drop * 0.25, worldWidth * 0.055 * recessScale)];
+    const bevel = [x + direction * bevelInset, y, z - Math.min(drop * (0.22 + 0.08 * shoulder + 0.06 * chips), worldWidth * 0.055 * recessScale)];
     const fold = [x + direction * foldInset, y - shiftY, z - drop * foldDepth];
-    const back = [x + direction * backInset, y, z - drop];
+    // Use a separate shape for the deepest contour, keeping both sides centered.
+    const backOffset = backInset + Math.min(worldWidth * 0.035, gap * 0.095) * backVariation;
+    const back = [x + direction * Math.max(nominalFoldInset, foldInset, backOffset), y - backShiftY, z - drop];
     returns.set(point, [point, bevel, fold, back]);
   }
   for (const [a, b] of rims) {
@@ -582,13 +675,14 @@ export function buildCliffSection(start, end, ledges, worldWidth, settings, seed
   const geometry = new BufferGeometry();
   geometry.setAttribute('position', new Float32BufferAttribute(positions, 3));
   geometry.setAttribute('normal', new Float32BufferAttribute(normals, 3));
+  geometry.userData.facetIds = facetIds;
   geometry.computeBoundingBox();
   geometry.computeBoundingSphere();
   return { geometry, start, end, mounts, bridge, frontAspect: { ...frontAspect, panels: frontPanels.size } };
 }
 
 export class ProceduralCliffs {
-  constructor(world) {
+  constructor(world, wearTexture) {
     this.group = new Group();
     this.group.name = 'Procedural platform cliffs';
     world.add(this.group);
@@ -596,6 +690,8 @@ export class ProceduralCliffs {
     this.mountBands = new Map();
     this.lastBuild = null;
     this.material = new MeshStandardMaterial({ color: ROCK_COLOR, roughness: 0.94 });
+    this.wearTexture = wearTexture;
+    if (wearTexture) applyCliffWear(this.material, wearTexture);
   }
 
   remove(key, section) {
@@ -648,6 +744,7 @@ export class ProceduralCliffs {
       if (current && !force && mountingKeys.size === current.mountingKeys.size && [...mountingKeys].every((id) => current.mountingKeys.has(id))) continue;
       const before = performance.now();
       const rock = buildCliffSection(start, start + SECTION_HEIGHT, nearby.map(([, ledge]) => ledge), config.world.width, config.platformSupports, seed, key);
+      if (this.wearTexture) addCliffSurfaceAttributes(rock.geometry, start);
       const vertices = rock.geometry.getAttribute('position').count;
       this.lastBuild = { ms: performance.now() - before, vertices, triangles: vertices / 3 };
       const mesh = current?.mesh ?? new Mesh(rock.geometry, this.material);

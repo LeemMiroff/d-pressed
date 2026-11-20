@@ -1,21 +1,29 @@
 import { Mesh, MeshStandardMaterial } from 'three';
 import { SUPPORT_SCALE_LIMITS } from './config.js';
 import { loadStoneGeometry } from './stone-geometry.js';
+import { addCliffSurfaceAttributes, applyCliffWear } from './cliff-surface.js';
 
 const limitScale = (value) => Math.max(SUPPORT_SCALE_LIMITS.min, Math.min(SUPPORT_SCALE_LIMITS.max, value));
 
-export async function loadPlatformSupports(urls) {
-  const variants = await Promise.all(urls.map((url) => loadStoneGeometry(url, { normalize: false })));
+export async function loadPlatformSupports(urls, wearTextureReady) {
+  const [variants, wearTexture] = await Promise.all([
+    Promise.all(urls.map((url) => loadStoneGeometry(url, { normalize: false }))),
+    wearTextureReady,
+  ]);
   if (variants.some(({ geometry }) => geometry.boundingBox.max.z > 3)) {
     throw new Error('A platform support exceeds the 3-unit relief behind its ledge');
   }
-  return new PlatformSupports(variants);
+  return new PlatformSupports(variants, wearTexture);
 }
 
 class PlatformSupports {
-  constructor(variants) {
+  constructor(variants, wearTexture) {
     this.variants = variants;
     this.material = new MeshStandardMaterial({ vertexColors: true, roughness: 0.94 });
+    if (wearTexture) {
+      for (const { geometry } of variants) addCliffSurfaceAttributes(geometry);
+      applyCliffWear(this.material, wearTexture, 0.72);
+    }
   }
 
   attach(platform, parent) {

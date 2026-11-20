@@ -69,12 +69,13 @@ export class ThreeInspector {
           <div data-controls="foliage-wind"></div>
         </section>
         <section class="inspector__panel" id="inspector-panel-cliffs" data-panel="cliffs" role="tabpanel" tabindex="0">
-          <p class="inspector__hint">Глубина ниже нуля подаёт скалы вперёд. Скорость 1 — как у платформ, 0 — без прокрутки.</p>
-          <div data-controls="cliffs"></div>
-          <strong>Скалы под платформами</strong>
-          <label class="inspector__check"><input type="checkbox" data-procedural-cliffs>Генеративные скалы</label>
+          <strong>Передняя скала</strong>
+          <label class="inspector__check"><input type="checkbox" data-procedural-cliffs>Сплошная скала с проёмами</label>
           <div data-controls="procedural-cliffs"></div>
           <div data-controls="supports"></div>
+          <strong>Фон за проёмами</strong>
+          <p class="inspector__hint">Отрицательная глубина приближает слой. Скорость 1 — как у платформ, 0 — без прокрутки.</p>
+          <div data-controls="cliffs"></div>
         </section>
         <section class="inspector__panel" id="inspector-panel-presets" data-panel="presets" role="tabpanel" tabindex="0">
           <div class="inspector__preset">
@@ -222,8 +223,8 @@ export class ThreeInspector {
       ['atmosphere.farHazeAmount', 'Плотность дальней дымки', 0, 1, 0.01, 'atmosphere-far', 'Чем выше значение, тем ближе дальние скалы по цвету к выбранной дымке.'],
       ['foliageWind.strength', 'Сила ветра', 0, FOLIAGE_WIND_LIMITS.maxStrength, 0.1, 'foliage-wind', 'Как далеко сгибаются кончики травы, цветов и лиан.'],
       ['foliageWind.speed', 'Скорость ветра', 0, FOLIAGE_WIND_LIMITS.maxSpeed, 0.05, 'foliage-wind', 'Частота покачивания в циклах в секунду. Ноль фиксирует текущий наклон.'],
-      ['foliageWind.sway', 'Размах покачивания', 0, 1, 0.05, 'foliage-wind', 'Насколько широко растения качаются и во время порывов, и между ними.'],
-      ['foliageWind.gustiness', 'Порывистость', 0, 1, 0.05, 'foliage-wind', 'Насколько сильно порывы усиливают постоянное покачивание.'],
+      ['foliageWind.sway', 'Размах покачивания', 0, FOLIAGE_WIND_LIMITS.maxSway, 0.05, 'foliage-wind', 'Насколько широко растения качаются и во время порывов, и между ними.'],
+      ['foliageWind.gustiness', 'Порывистость', 0, FOLIAGE_WIND_LIMITS.maxGustiness, 0.05, 'foliage-wind', 'Насколько сильно порывы усиливают постоянное покачивание.'],
       ['cliffs.nearScale', 'Масштаб ближних', CLIFF_LIMITS.minScale, CLIFF_LIMITS.maxScale, 0.01, 'cliffs', 'Размер ближних скал. 1 — исходный масштаб.'],
       ['cliffs.nearGap', 'Глубина ближних', CLIFF_LIMITS.minGap, CLIFF_LIMITS.maxGap, 0.5, 'cliffs', 'Уменьшите глубину ниже нуля, чтобы ближние скалы зашли под заднюю часть платформ.'],
       ['cliffs.nearSpeed', 'Скорость ближних', 0, CLIFF_LIMITS.maxSpeed, 0.01, 'cliffs', 'Скорость прокрутки ближних скал относительно платформ.'],
@@ -237,6 +238,8 @@ export class ThreeInspector {
       ['platformSupports.facetSize', 'Размер граней', 16, 34, 1, 'procedural-cliffs', 'Расстояние между крупными изломами в игровых единицах.'],
       ['platformSupports.facetStretch', 'Вытянутость граней', 0.9, 1.8, 0.05, 'procedural-cliffs', 'Удлиняет крупные плоскости вдоль скалы.'],
       ['platformSupports.fractureStrength', 'Резкость изломов', 0, 1, 0.05, 'procedural-cliffs', 'Меняет неровность проёма, рельеф граней и повороты стенок в глубине.'],
+      ['platformSupports.middleContourSpread', 'Разброс среднего контура', 0, 2, 0.05, 'procedural-cliffs', 'Множитель горизонтального и вертикального смещения среднего контура скалы.'],
+      ['platformSupports.backContourSpread', 'Разброс глубокого контура', 0, 2, 0.05, 'procedural-cliffs', 'Множитель горизонтального и вертикального смещения самого глубокого контура скалы.'],
       ['platformSupports.recessDepth', 'Глубина загиба', 0.6, 1.4, 0.05, 'procedural-cliffs', 'Масштаб глубины стенок внутри проёма.'],
       ['platformSupports.mountBlend', 'Адаптация к платформам', 0.65, 1.4, 0.05, 'procedural-cliffs', 'Задаёт, насколько далеко от точки крепления меняется скала.'],
     ];

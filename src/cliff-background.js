@@ -3,6 +3,7 @@ import {
   Mesh, MeshBasicMaterial, Object3D, PlaneGeometry, Vector3,
 } from 'three';
 import { CLIFF_LIMITS } from './config.js';
+import { addCliffSurfaceAttributes, applyCliffWear } from './cliff-surface.js';
 
 const PERIOD = 360;
 const EDGE_MARGIN = 260;
@@ -92,18 +93,23 @@ function shadeRock(source, layer) {
 }
 
 export class CliffBackground {
-  constructor(source, atmosphere) {
+  constructor(source, atmosphere, wearTexture) {
     this.group = new Group();
     this.group.name = 'Cliff background';
     this.sky = makeSky();
     this.group.add(this.sky);
     this.layers = LAYERS.map((layer) => {
       const geometry = shadeRock(source, layer);
+      const material = new MeshBasicMaterial({ vertexColors: true });
+      if (wearTexture) {
+        addCliffSurfaceAttributes(geometry, 0, 90);
+        applyCliffWear(material, wearTexture, layer.key === 'near' ? 0.28 : 0.14);
+      }
       return {
         ...layer,
         geometry,
         baseColors: geometry.getAttribute('color').array.slice(),
-        material: new MeshBasicMaterial({ vertexColors: true }),
+        material,
         mesh: null,
         previousTravel: 0,
         travel: 0,
