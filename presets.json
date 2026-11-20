@@ -1,0 +1,19 @@
+{
+  "basa_01": {
+    "platforms.initialWorldSpeed": 20,
+    "platforms.minGap": 42,
+    "platforms.maxGap": 42,
+    "platforms.minWidth": 40,
+    "platforms.maxWidth": 60,
+    "player.maxHorizontalSpeed": 50,
+    "player.acceleration": 1200,
+    "player.braking": 1200,
+    "player.gravity": 480,
+    "camera.fov": 52,
+    "camera.tiltDegrees": 0,
+    "camera.distanceMultiplier": 1,
+    "camera.centerOffset": 8,
+    "platforms.enablePairedPlatforms": true,
+    "platforms.hubPortal.enabled": true
+  }
+}
