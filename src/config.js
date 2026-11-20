@@ -2,6 +2,7 @@ import { RUN_CARDS } from './run-cards.js';
 
 export const CLIFF_LIMITS = Object.freeze({ minScale: 0.7, maxScale: 1.45, minGap: -20, maxGap: 100, maxSpeed: 2 });
 export const SUPPORT_SCALE_LIMITS = Object.freeze({ min: 0.6, max: 2.6 });
+export const FOLIAGE_WIND_LIMITS = Object.freeze({ maxStrength: 4, maxSpeed: 3 });
 
 export const CONFIG = Object.freeze({
   cards: Object.fromEntries(RUN_CARDS.map(({ id, bonus }) => [id, { enabled: true, grantImmediately: false, bonus }])),
@@ -177,6 +178,13 @@ export const CONFIG = Object.freeze({
     nearHazeAmount: 0.40,
     farHazeColor: 0x668ec2,
     farHazeAmount: 0.66,
+  },
+  foliageWind: {
+    enabled: true,
+    strength: 3.2,
+    speed: 0.8,
+    sway: 0.8,
+    gustiness: 0.85,
   },
   platformSupports: {
     widthScale: 1.65,

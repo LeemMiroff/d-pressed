@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { Group, Mesh, Raycaster, Vector3 } from 'three';
+import { DoubleSide, Group, Mesh, MeshBasicMaterial, Raycaster, Vector3 } from 'three';
 import { CONFIG } from '../src/config.js';
 import { buildCliffSection, maximumCliffRecess, ProceduralCliffs } from '../src/procedural-cliffs.js';
 
@@ -87,6 +87,30 @@ test('rock returns recede into the opening and both sides can open to the screen
   assert.ok(left.geometry.boundingBox.max.z <= 3);
   assert.ok([116, 122, 128, 134].some((y) => isOpen(left, 1, y)));
   assert.ok([302, 308, 314, 320].some((y) => isOpen(right, 119, y)));
+});
+
+test('the opening narrows into the cliff without a sideways bend', () => {
+  const section = buildCliffSection(150, 300, [], 120, { ...settings, fractureStrength: 0 }, seed, 1);
+  const material = new MeshBasicMaterial({ side: DoubleSide });
+  const mesh = new Mesh(section.geometry, material);
+  const ray = new Raycaster(new Vector3(), new Vector3(1, 0, 0));
+
+  for (const y of [240, 250, 270]) {
+    const openings = [-16, -28, -32].map((z) => {
+      ray.ray.origin.set(-37, section.start - y, z);
+      const edges = ray.intersectObject(mesh).map(({ point }) => point.x);
+      assert.ok(Math.abs(edges[0] + 36) < 1e-5);
+      assert.ok(Math.abs(edges.at(-1) - 156) < 1e-5);
+      assert.equal(edges.length, 4);
+      return { width: edges[2] - edges[1], center: (edges[1] + edges[2]) / 2 };
+    });
+    for (let i = 1; i < openings.length; i += 1) {
+      assert.ok(openings[i].width < openings[i - 1].width);
+      assert.ok(Math.abs(openings[i].center - openings[0].center) < 0.8);
+    }
+  }
+  material.dispose();
+  section.geometry.dispose();
 });
 
 test('large planar facets and adjustable returns stay within the cliff depth bounds', () => {

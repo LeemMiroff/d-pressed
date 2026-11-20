@@ -1,5 +1,5 @@
 import { RUN_CARDS } from './run-cards.js';
-import { CLIFF_LIMITS, SUPPORT_SCALE_LIMITS } from './config.js';
+import { CLIFF_LIMITS, FOLIAGE_WIND_LIMITS, SUPPORT_SCALE_LIMITS } from './config.js';
 
 const TAB_DEFINITIONS = [
   ['flow', 'Поток'],
@@ -64,6 +64,9 @@ export class ThreeInspector {
           <p class="inspector__hint">Плотность задаёт, насколько цвет дымки смешивается с цветом скал.</p>
           <div data-controls="atmosphere-near"></div>
           <div data-controls="atmosphere-far"></div>
+          <strong>Ветер в растениях</strong>
+          <label class="inspector__check"><input type="checkbox" data-foliage-wind>Покачивание растений</label>
+          <div data-controls="foliage-wind"></div>
         </section>
         <section class="inspector__panel" id="inspector-panel-cliffs" data-panel="cliffs" role="tabpanel" tabindex="0">
           <p class="inspector__hint">Глубина ниже нуля подаёт скалы вперёд. Скорость 1 — как у платформ, 0 — без прокрутки.</p>
@@ -107,6 +110,7 @@ export class ThreeInspector {
     this.increaseWorldSpeedInput = this.root.querySelector('[data-increase-world-speed]');
     this.flowProgressionInput = this.root.querySelector('[data-flow-progression]');
     this.shadowsInput = this.root.querySelector('[data-shadows]');
+    this.foliageWindInput = this.root.querySelector('[data-foliage-wind]');
     this.proceduralCliffsInput = this.root.querySelector('[data-procedural-cliffs]');
     this.proceduralCliffsInput.checked = config.platformSupports.procedural;
     this.proceduralCliffsInput.addEventListener('change', () => {
@@ -132,7 +136,7 @@ export class ThreeInspector {
       character: 'Масштаб визуальной модели и скорость её анимации.',
       camera: 'Поле зрения, наклон, дистанция и вертикальный центр камеры.',
       lighting: 'Интенсивность, положение света и параметры теней.',
-      world: 'Цвет неба и дымка на двух фоновых слоях.',
+      world: 'Цвет неба, дымка на фоновых слоях и ветер в растениях.',
       cliffs: 'Настройки фоновых скал и опор платформ.',
       presets: 'Сохранение, применение и перезапись наборов настроек.',
       debug: 'Текущий режим игры, скорость потока и счётчики прогрессии.',
@@ -144,6 +148,7 @@ export class ThreeInspector {
     this.increaseWorldSpeedInput.checked = config.platforms.increaseWorldSpeed;
     this.flowProgressionInput.checked = config.platforms.useFlowProgression;
     this.shadowsInput.checked = config.lighting?.shadowsEnabled !== false;
+    this.foliageWindInput.checked = config.foliageWind.enabled;
     this.pairedInput.addEventListener('change', (event) => {
       config.platforms.enablePairedPlatforms = event.target.checked;
       game.restart(true, false);
@@ -163,6 +168,10 @@ export class ThreeInspector {
     this.shadowsInput.addEventListener('change', (event) => {
       config.lighting.shadowsEnabled = event.target.checked;
       game.applyLighting();
+    });
+    this.foliageWindInput.addEventListener('change', (event) => {
+      config.foliageWind.enabled = event.target.checked;
+      game.applyFoliageWindSettings();
     });
 
     const colors = [
@@ -211,6 +220,10 @@ export class ThreeInspector {
       ['lighting.fillPositionZ', 'Заполняющий свет Z', -240, 360, 1, 'lighting', 'Позиция дополнительного света по глубине сцены.'],
       ['atmosphere.nearHazeAmount', 'Плотность ближней дымки', 0, 1, 0.01, 'atmosphere-near', '0 сохраняет исходные оттенки скал, 1 полностью окрашивает слой выбранным цветом.'],
       ['atmosphere.farHazeAmount', 'Плотность дальней дымки', 0, 1, 0.01, 'atmosphere-far', 'Чем выше значение, тем ближе дальние скалы по цвету к выбранной дымке.'],
+      ['foliageWind.strength', 'Сила ветра', 0, FOLIAGE_WIND_LIMITS.maxStrength, 0.1, 'foliage-wind', 'Как далеко сгибаются кончики травы, цветов и лиан.'],
+      ['foliageWind.speed', 'Скорость ветра', 0, FOLIAGE_WIND_LIMITS.maxSpeed, 0.05, 'foliage-wind', 'Частота покачивания в циклах в секунду. Ноль фиксирует текущий наклон.'],
+      ['foliageWind.sway', 'Размах покачивания', 0, 1, 0.05, 'foliage-wind', 'Насколько широко растения качаются и во время порывов, и между ними.'],
+      ['foliageWind.gustiness', 'Порывистость', 0, 1, 0.05, 'foliage-wind', 'Насколько сильно порывы усиливают постоянное покачивание.'],
       ['cliffs.nearScale', 'Масштаб ближних', CLIFF_LIMITS.minScale, CLIFF_LIMITS.maxScale, 0.01, 'cliffs', 'Размер ближних скал. 1 — исходный масштаб.'],
       ['cliffs.nearGap', 'Глубина ближних', CLIFF_LIMITS.minGap, CLIFF_LIMITS.maxGap, 0.5, 'cliffs', 'Уменьшите глубину ниже нуля, чтобы ближние скалы зашли под заднюю часть платформ.'],
       ['cliffs.nearSpeed', 'Скорость ближних', 0, CLIFF_LIMITS.maxSpeed, 0.01, 'cliffs', 'Скорость прокрутки ближних скал относительно платформ.'],
@@ -358,6 +371,10 @@ export class ThreeInspector {
         this.game.applyAtmosphereSettings();
         return;
       }
+      if (category === 'foliage-wind') {
+        this.game.applyFoliageWindSettings();
+        return;
+      }
       if (category === 'cliffs') {
         this.game.applyCliffSettings();
         return;
@@ -394,6 +411,7 @@ export class ThreeInspector {
     payload['platforms.increaseWorldSpeed'] = this.increaseWorldSpeedInput.checked;
     payload['platforms.useFlowProgression'] = this.flowProgressionInput.checked;
     payload['lighting.shadowsEnabled'] = this.shadowsInput.checked;
+    payload['foliageWind.enabled'] = this.foliageWindInput.checked;
     payload['platformSupports.procedural'] = this.proceduralCliffsInput.checked;
     for (const checkbox of this.root.querySelectorAll('[data-card-setting]')) {
       payload[checkbox.dataset.cardSetting] = checkbox.checked;
@@ -519,6 +537,10 @@ export class ThreeInspector {
       this.config.lighting.shadowsEnabled = values['lighting.shadowsEnabled'];
       this.shadowsInput.checked = values['lighting.shadowsEnabled'];
     }
+    if (typeof values['foliageWind.enabled'] === 'boolean') {
+      this.config.foliageWind.enabled = values['foliageWind.enabled'];
+      this.foliageWindInput.checked = values['foliageWind.enabled'];
+    }
     if (typeof values['platformSupports.procedural'] === 'boolean') {
       this.config.platformSupports.procedural = values['platformSupports.procedural'];
       this.proceduralCliffsInput.checked = values['platformSupports.procedural'];
@@ -526,6 +548,7 @@ export class ThreeInspector {
     }
     this.game.applyLighting();
     this.game.applyAtmosphereSettings();
+    this.game.applyFoliageWindSettings();
     this.game.applyPlayerVisualSettings();
     this.game.applyPlatformSupportSettings();
     this.game.applyProceduralCliffSettings();

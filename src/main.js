@@ -7,18 +7,21 @@ import cliffMass from '../public/models/stone-study/cliff-mass.glb?url&inline';
 import lowSpur from '../public/models/stone-study/support-low-spur.glb?url&inline';
 import splitPillar from '../public/models/stone-study/support-split-pillar.glb?url&inline';
 import brokenTerrace from '../public/models/stone-study/support-broken-terrace.glb?url&inline';
+import foliageAtlas from '../public/assets/platform-foliage/foliage-atlas.png?url&inline';
+import grassNoise from '../public/assets/platform-foliage/grass-noise.png?url&inline';
 import { ThreeGame, loadThreeConfig } from './three-engine.js';
 import { ThreeInspector } from './three-inspector.js';
 import { loadStonePlatform } from './stone-platform.js';
 import { loadStoneGeometry } from './stone-geometry.js';
 import { loadPlatformSupports } from './platform-supports.js';
+import { loadPlatformFoliage } from './platform-foliage.js';
 
 async function start() {
   const mount = document.querySelector('#app');
   const canvas = document.createElement('canvas');
   canvas.setAttribute('aria-label', 'Игровое поле');
   mount.append(canvas);
-  const [config, platform, cliff, supports] = await Promise.all([
+  const [config, platform, cliff, supports, foliage] = await Promise.all([
     loadThreeConfig(),
     loadStonePlatform(stonePlatform).catch((error) => {
       console.warn('D-PRESSED stone platform failed to load, using fallback boxes', error);
@@ -32,8 +35,12 @@ async function start() {
       console.warn('D-PRESSED platform supports failed to load', error);
       return null;
     }),
+    loadPlatformFoliage(foliageAtlas, grassNoise).catch((error) => {
+      console.warn('D-PRESSED platform foliage failed to load', error);
+      return null;
+    }),
   ]);
-  const game = new ThreeGame(canvas, config, { wall, model, character, platform, cliff, supports });
+  const game = new ThreeGame(canvas, config, { wall, model, character, platform, cliff, supports, foliage });
   const inspector = new ThreeInspector(config, game);
   let pointerId = null;
   const setHeld = (held) => { game.input.held = held; };

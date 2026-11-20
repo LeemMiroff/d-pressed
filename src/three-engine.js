@@ -10,6 +10,7 @@ import { ENEMY_HIT_FLIGHT_SECONDS, updateCollectibleEntity, updateEnemyEntity } 
 import { CARD_PRICE, CARD_PRICE_MULTIPLIER, REROLL_PRICE, drawRunCards } from './run-cards.js';
 import { PlayerFacing } from './player-facing.js';
 import { WindStreaks } from './wind-streaks.js';
+import { PlatformFoliage } from './platform-foliage.js';
 import { ENEMY_COLORS, createEnemyTexture, createChestTexture, mapBoxFront } from './entity-textures.js';
 import { fitStonePlatform } from './stone-platform.js';
 import { CliffBackground } from './cliff-background.js';
@@ -136,6 +137,10 @@ export class ThreeGame {
     this.createBackground();
     this.proceduralCliffs = new ProceduralCliffs(this.world);
     this.windStreaks = new WindStreaks(this.world, this.config.world.width, this.camera);
+    this.platformFoliage = assets.platform && assets.foliage
+      ? new PlatformFoliage(assets.platform.material, assets.foliage)
+      : null;
+    this.applyFoliageWindSettings();
     this.createPlayer();
     this.platformGenerator = new PlatformGenerator({
       config: this.config,
@@ -267,6 +272,10 @@ export class ThreeGame {
 
   applyAtmosphereSettings() {
     this.cliffBackground?.setAtmosphere(this.config.atmosphere);
+  }
+
+  applyFoliageWindSettings() {
+    this.platformFoliage?.setWind(this.config.foliageWind);
   }
 
   resizeBackgroundWall() {
@@ -1014,6 +1023,7 @@ export class ThreeGame {
     const renderWidth = platform.width + left + right;
     platform.node.position.set(renderX - left + renderWidth / 2, this.logicalY(renderY + platform.height / 2), 0);
     this.setPlatformRenderWidth(platform.mesh, renderWidth);
+    if (platform.active) this.platformFoliage?.fit(platform.mesh, left, platform.width, platform.foliageSeed);
     if (platform.support?.visible) platform.support.position.x = left - renderWidth / 2 + platform.supportOffset;
   }
 
@@ -1022,6 +1032,7 @@ export class ThreeGame {
     const renderWidth = this.hub.width + left + right;
     this.hubMesh.position.x = this.hub.x - left + renderWidth / 2;
     this.setPlatformRenderWidth(this.hubMesh, renderWidth);
+    this.platformFoliage?.fit(this.hubMesh, left, this.hub.width, 'hub');
     if (this.hub.support) this.hub.support.position.x = this.hub.x + this.hub.supportOffset;
   }
 
@@ -1030,6 +1041,7 @@ export class ThreeGame {
     const renderWidth = this.hubLanding.width + left + right;
     this.hubLandingGroup.position.set(this.hubLanding.x - left + renderWidth / 2, this.logicalY(renderY + this.hubLanding.height / 2), 0);
     this.setPlatformRenderWidth(this.hubLandingMesh, renderWidth);
+    this.platformFoliage?.fit(this.hubLandingMesh, left, this.hubLanding.width, 'landing');
     if (this.hubLanding.support) this.hubLanding.support.position.x = left - renderWidth / 2 + this.hubLanding.supportOffset;
   }
 
@@ -1041,6 +1053,10 @@ export class ThreeGame {
     platform.y = Math.round(y);
     platform.previousY = platform.y;
     platform.width = width;
+    // Pool slots move and get reused. Key decoration to the new ledge in route coordinates.
+    platform.foliageSeed = this.runSeed
+      ^ Math.imul(platform.x, 0x9e3779b1)
+      ^ Math.imul(Math.round(this.runDepth + platform.y), 0x85ebca6b);
     platform.patternType = type;
     platform.portalPlatform = false;
     platform.active = true;
@@ -1333,12 +1349,14 @@ export class ThreeGame {
       this.accumulator = 0;
       dt = 0;
     }
-    this.accumulator += Math.min(dt, 0.1);
+    const frameDelta = Math.min(dt, 0.1);
+    this.accumulator += frameDelta;
     let steps = 0;
     while (this.accumulator >= STEP && steps < 16) { this.fixedUpdate(STEP); this.accumulator -= STEP; steps += 1; }
-    if (!this.gameOver && !this.choosingCard) this.updatePlayerFacing(Math.min(dt, 0.1));
-    if (this.playerMixer) this.playerMixer.update(Math.min(dt, 0.1));
-    this.windStreaks.update(Math.min(dt, 0.1), this.worldHeight);
+    if (!this.gameOver && !this.choosingCard) this.updatePlayerFacing(frameDelta);
+    if (this.playerMixer) this.playerMixer.update(frameDelta);
+    this.windStreaks.update(frameDelta, this.worldHeight);
+    this.platformFoliage?.update(frameDelta);
     this.playerSpeedCounter.textContent = Math.abs(this.player.vx).toFixed(1);
     this.playerMaxSpeedCounter.textContent = String(this.getPlayerHorizontalSpeed());
     this.playerDamageCounter.textContent = String(this.damage + this.cardBonus('damage'));

@@ -487,6 +487,7 @@ export function buildCliffSection(start, end, ledges, worldWidth, settings, seed
     return rim;
   });
 
+  const bridgeRows = new Map();
   // Stitch the rock between the two open contours into the same front surface.
   if (bridge) {
     let previous = null;
@@ -509,6 +510,7 @@ export function buildCliffSection(start, end, ledges, worldWidth, settings, seed
         const fold = 1 - Math.abs(2 * t - 1);
         return [x, start - y, mix(left[2], right[2], t) - fold * 0.65];
       });
+      bridgeRows.set(index, [row[0], row.at(-1)]);
       if (previous) triangulateStrip(previous, row, surfacePoint, (a, b, c) => frontFace([a, b, c]));
       previous = row;
     }
@@ -516,43 +518,53 @@ export function buildCliffSection(start, end, ledges, worldWidth, settings, seed
 
   const onOuterEdge = ([x]) => x === outerLeft || x === outerRight;
   const rims = [...edges.values()].filter(([a, b]) => a[1] !== b[1] || (a[1] !== start - panels[0] && a[1] !== start - panels.at(-1)));
-  const rimNormals = new Map();
-  for (const [a, b] of rims) {
-    const dx = b[0] - a[0];
-    const dy = b[1] - a[1];
-    const length = Math.hypot(dx, dy) || 1;
-    for (const point of [a, b]) {
-      const normal = rimNormals.get(point) ?? [0, 0];
-      normal[0] += dy / length;
-      normal[1] -= dx / length;
-      rimNormals.set(point, normal);
+  const openingRows = new Map();
+  const pairOpening = (left, right, shiftY, insetVariation) => {
+    const width = right[0] - left[0];
+    if (width <= 0) return;
+    openingRows.set(left, [width, shiftY, insetVariation]);
+    openingRows.set(right, [-width, shiftY, insetVariation]);
+  };
+  for (let i = 0; i < uniqueCuts.length; i += 1) {
+    const height = uniqueCuts[i];
+    const spacing = Math.min(height - (uniqueCuts[i - 1] ?? height), (uniqueCuts[i + 1] ?? height) - height);
+    // Use the same world row on both sides of a streamed seam. Limit movement
+    // by the nearest row so short facets keep their original order.
+    const key = Math.round((height - origin) * 64);
+    const shiftY = (2 * noise(seed ^ 1259, key) - 1) * Math.min(3.5, spacing * 0.23) * detail;
+    const insetVariation = (2 * noise(seed ^ 2767, key) - 1) * 0.88 * detail;
+    const bridgeRow = bridgeRows.get(i);
+    if (bridgeRow) {
+      pairOpening(leftRim[i], bridgeRow[0], shiftY, insetVariation);
+      pairOpening(bridgeRow[1], rightRim[i], shiftY, insetVariation);
+    } else {
+      pairOpening(leftRim[i], rightRim[i], shiftY, insetVariation);
     }
   }
+
   const returns = new Map();
-  const bendPhase = noise(seed, 1833) * Math.PI * 2;
-  for (const [point, [nx, ny]] of rimNormals) {
+  const depthPhase = noise(seed, 1833) * Math.PI * 2;
+  for (const point of new Set(rims.flat())) {
     const [x, y, z] = point;
-    const length = Math.hypot(nx, ny) || 1;
-    const outer = onOuterEdge(point);
-    const [outX, outY] = outer ? [0, 0] : [nx / length, ny / length];
+    const [span = 0, shiftY = 0, insetVariation = 0] = openingRows.get(point) ?? [];
+    const gap = Math.abs(span);
+    const direction = Math.sign(span);
     const height = start - y;
     const cut = fracture(height + x * 0.52, 29, seed ^ 591);
-    const [left, right] = bankEdges(height, worldWidth, settings, seed, origin, mounts);
-    const gap = right - left;
     const targetDepth = worldWidth * (RECESS_DEPTH + cut * RECESS_VARIATION) * recessScale;
     const drop = Math.max(worldWidth * MIN_RETURN_DEPTH, z + targetDepth);
     const bevelInset = Math.min(worldWidth * 0.033, gap * 0.12);
-    const foldInset = Math.min(worldWidth * 0.063, gap * 0.24);
-    const backInset = Math.min(worldWidth * 0.047, gap * 0.17);
-    const bend = outer ? 0 : Math.min(worldWidth * 0.115, gap * 0.19) * mix(0.78, 1.25, detail);
-    const turn = 0.79 * Math.sin(height / 58 + bendPhase) + 0.42 * fracture(height, 79, seed ^ 368);
+    const nominalFoldInset = Math.min(worldWidth * 0.063, gap * 0.24);
+    const backInset = Math.min(worldWidth * 0.088, gap * 0.34);
+    const insetRange = insetVariation < 0 ? nominalFoldInset - bevelInset : backInset - nominalFoldInset;
+    const foldInset = nominalFoldInset + insetVariation * insetRange;
     const foldDepth = mix(0.52, 0.6, detail) + mix(0.04, 0.19, detail)
-      * (0.55 * Math.sin(height / 48 + bendPhase) + 0.9 * fracture(height + x * 0.34, 76, seed ^ 817));
+      * (0.55 * Math.sin(height / 48 + depthPhase) + 0.9 * fracture(height + x * 0.34, 76, seed ^ 817));
 
-    // The same rim vertex is carried through every cross-section of the loft.
-    const bevel = [x + outX * bevelInset, y + outY * bevelInset, z - Math.min(drop * 0.25, worldWidth * 0.055 * recessScale)];
-    const fold = [x + outX * foldInset + bend * turn, y + outY * foldInset, z - drop * foldDepth];
-    const back = [x + outX * backInset + bend * (0.33 * Math.sin(height / 92 - bendPhase) - turn * 0.63), y + outY * backInset, z - drop];
+    // Both ends of an opening move inward by the same amount along its row.
+    const bevel = [x + direction * bevelInset, y, z - Math.min(drop * 0.25, worldWidth * 0.055 * recessScale)];
+    const fold = [x + direction * foldInset, y - shiftY, z - drop * foldDepth];
+    const back = [x + direction * backInset, y, z - drop];
     returns.set(point, [point, bevel, fold, back]);
   }
   for (const [a, b] of rims) {
