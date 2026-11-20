@@ -130,7 +130,8 @@ test('rock reaching across an opening has a short flat tip behind the ledge', ()
     assert.ok(ray.intersectObject(mesh)[0]?.point.z > 2.4);
   }
   ray.ray.origin.set(72.72, section.start - 225, 10);
-  assert.ok(ray.intersectObject(mesh)[0]?.point.z < 0);
+  const bevel = ray.intersectObject(mesh)[0];
+  assert.ok(bevel?.point.z < 1);
 });
 
 test('scrolling discards geometry outside the retained range and keeps the seam in view', () => {

@@ -6,6 +6,7 @@ const BREAK_INTERVAL = 184;
 const SEAM_PRECISION = 65536;
 const RECESS_DEPTH = 0.31;
 const RECESS_VARIATION = 0.08;
+const MIN_RETURN_DEPTH = 0.025;
 const SEAM_OFFSET_LIMIT = 24;
 const ROCK_COLOR = 0x59617e;
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
@@ -13,7 +14,11 @@ const mix = (a, b, t) => a + (b - a) * t;
 const smooth = (t) => t * t * (3 - 2 * t);
 
 export function maximumCliffRecess(width, settings = {}) {
-  return width * (RECESS_DEPTH + RECESS_VARIATION / 2) * clamp(settings.recessDepth ?? 1, 0.6, 1.4);
+  const configured = width * (RECESS_DEPTH + RECESS_VARIATION / 2) * clamp(settings.recessDepth ?? 1, 0.6, 1.4);
+  const detail = clamp(settings.fractureStrength ?? 0.58, 0, 1);
+  // The loft also needs room to recede behind the deepest possible front edge.
+  const spine = Math.max(1.7 + mix(5, 22, detail) / 2, width * 0.0736 - ROCK_RELIEF);
+  return Math.max(configured, spine + width * (0.256 + MIN_RETURN_DEPTH) + 0.65);
 }
 
 function noise(seed, key) {
@@ -130,12 +135,11 @@ function distanceSquared(a, b) {
   return (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2;
 }
 
-function triangulateStrip(first, second, surfacePoint, emit, score) {
+function triangulateStrip(first, second, surfacePoint, emit) {
   const cost = (first, second, third) => {
     const a = surfacePoint(first);
     const b = surfacePoint(second);
     const c = surfacePoint(third);
-    if (score) return score(a, b, c);
     const area = projectedArea(a, b, c);
     const perimeter = distanceSquared(a, b) + distanceSquared(b, c) + distanceSquared(c, a);
     return perimeter / Math.max(area, 0.01);
@@ -247,137 +251,6 @@ function triangulateReturnQuad(face, surfacePoint) {
   const [p, q, r, s] = face;
   return firstRays < secondRays || (firstRays === secondRays && first + 1e-9 >= second)
     ? [[p, q, r], [p, r, s]] : [[p, q, s], [q, r, s]];
-}
-
-function foldShortRimEdges(rims, returns, onOuterEdge, surfacePoint) {
-  const incoming = new Map();
-  const outgoing = new Map();
-  const lengths = rims.map(([a, b]) => {
-    const first = surfacePoint(a);
-    const second = surfacePoint(b);
-    return Math.hypot(first[0] - second[0], first[1] - second[1]);
-  });
-  rims.forEach(([from, to], index) => {
-    outgoing.set(from, index);
-    incoming.set(to, index);
-  });
-  rims.forEach(([a, b], index) => {
-    const length = lengths[index];
-    const before = incoming.get(a);
-    const after = outgoing.get(b);
-    // Keep the three panels affected by a merge clear of all other merges.
-    if (length > 7 || before == null || after == null || onOuterEdge(a) || onOuterEdge(b)
-      || distanceSquared(a, b) > 100) return;
-    const previous = rims[before][0];
-    const next = rims[after][1];
-    const minBefore = Math.min(lengths[before], lengths[incoming.get(previous)] ?? Infinity);
-    const minAfter = Math.min(lengths[after], lengths[outgoing.get(next)] ?? Infinity);
-    if (length > minBefore + 1e-8 || length >= minAfter - 1e-8) return;
-    const [, firstFold, firstBack] = returns.get(a);
-    const [, secondFold, secondBack] = returns.get(b);
-    const front = a.map((value, axis) => mix(value, b[axis], 0.5));
-    const oldFold = firstFold.map((value, axis) => mix(value, secondFold[axis], 0.5));
-    const depth = Math.abs(oldFold[2] - front[2]);
-    const bend = Math.min(0.68, Math.max(3.2, length * 1.1) / Math.max(1, depth));
-    const fold = front.map((value, axis) => mix(value, oldFold[axis], bend));
-    const back = firstBack.map((value, axis) => mix(value, secondBack[axis], 0.5));
-    const oldStrip = [returns.get(previous), returns.get(a), returns.get(b), returns.get(next)];
-    const newStrip = [oldStrip[0], [a, fold, back], [b, fold, back], oldStrip[3]];
-    const score = (strip) => strip.slice(1).reduce((total, to, i) => {
-      const from = strip[i];
-      return total + countReturnRays(from.slice(0, 2), to.slice(0, 2), surfacePoint)
-        + countReturnRays(from.slice(1), to.slice(1), surfacePoint);
-    }, 0);
-    if (score(newStrip) > score(oldStrip)) return;
-    returns.set(a, newStrip[1]);
-    returns.set(b, newStrip[2]);
-  });
-}
-
-function returnRail(start, end, surfacePoint) {
-  const a = surfacePoint(start);
-  const b = surfacePoint(end);
-  const projectedSpan = Math.hypot(b[0] - a[0], b[1] - a[1]);
-  if (projectedSpan <= 8.5 || distanceSquared(a, b) <= 16.5 ** 2) return [start, end];
-  // Neighbors share endpoints and therefore use the same extra vertex.
-  return [start, start.map((value, axis) => mix(value, end[axis], 0.5)), end];
-}
-
-function returnTriangleCost(a, b, c) {
-  return 20 * narrowInView(a, b, c) + 1 / Math.max(triangleQuality(a, b, c), 1e-5);
-}
-
-function returnFaces(from, to, surfacePoint) {
-  if (from[0] === to[0] && from.at(-1) === to.at(-1)) return [];
-  const valid = ([a, b, c]) => a !== b && b !== c && c !== a;
-  if (from.length === 2 && to.length === 2) {
-    return triangulateReturnQuad([to[0], from[0], from[1], to[1]], surfacePoint).filter(valid);
-  }
-  const faces = [];
-  triangulateStrip(to, from, surfacePoint, (a, b, c) => {
-    if (valid([a, b, c])) faces.push([a, b, c]);
-  }, returnTriangleCost);
-  return faces;
-}
-
-function countReturnRays(from, to, surfacePoint) {
-  return returnFaces(from, to, surfacePoint)
-    .reduce((sum, face) => sum + narrowInView(...face.map(surfacePoint)), 0);
-}
-
-function makeReturnBands(rims, returns, surfacePoint) {
-  const rails = new Map();
-  const getRail = (start, end) => {
-    if (!rails.has(start)) rails.set(start, new Map());
-    const ends = rails.get(start);
-    if (!ends.has(end)) ends.set(end, { points: [start, end], edges: [], improvement: 0 });
-    return ends.get(end);
-  };
-  const bands = [];
-  for (const [a, b] of rims) {
-    const from = returns.get(a);
-    const to = returns.get(b);
-    for (let level = 1; level < 3; level += 1) {
-      const first = getRail(from[level - 1], from[level]);
-      const second = getRail(to[level - 1], to[level]);
-      if (first === second) continue;
-      const band = { first, second, level };
-      first.edges.push(band);
-      second.edges.push(band);
-      bands.push(band);
-    }
-  }
-
-  const candidates = [];
-  for (const ends of rails.values()) {
-    for (const rail of ends.values()) {
-      const extra = returnRail(...rail.points, surfacePoint);
-      if (extra.length === 2) continue;
-      for (const band of rail.edges) {
-        const { first, second } = band;
-        const before = band.rayCount ??= countReturnRays(first.points, second.points, surfacePoint);
-        const after = countReturnRays(first === rail ? extra : first.points, second === rail ? extra : second.points, surfacePoint);
-        if (after > before) {
-          rail.improvement = 0;
-          break;
-        }
-        rail.improvement += before - after;
-      }
-      if (rail.improvement > 0) candidates.push({ rail, extra });
-    }
-  }
-  for (const { rail, extra } of candidates) {
-    const [x, y, z] = rail.points[0];
-    const best = rail.edges.every(({ first, second }) => {
-      const other = first === rail ? second : first;
-      if (rail.improvement !== other.improvement) return rail.improvement > other.improvement;
-      const [px, py, pz] = other.points[0];
-      return y < py || (y === py && (x < px || (x === px && z < pz)));
-    });
-    // Adjacent candidates are mutually exclusive, keeping both sides of each split in agreement.
-    if (best) rail.points = extra;
-  }
-  return bands;
 }
 
 function marginInside(face, point, surfacePoint) {
@@ -658,7 +531,7 @@ export function buildCliffSection(start, end, ledges, worldWidth, settings, seed
   const returns = new Map();
   const bendPhase = noise(seed, 1833) * Math.PI * 2;
   for (const [point, [nx, ny]] of rimNormals) {
-    const [x, y] = point;
+    const [x, y, z] = point;
     const length = Math.hypot(nx, ny) || 1;
     const outer = onOuterEdge(point);
     const [outX, outY] = outer ? [0, 0] : [nx / length, ny / length];
@@ -666,22 +539,32 @@ export function buildCliffSection(start, end, ledges, worldWidth, settings, seed
     const cut = fracture(height + x * 0.52, 29, seed ^ 591);
     const [left, right] = bankEdges(height, worldWidth, settings, seed, origin, mounts);
     const gap = right - left;
-    const inset = Math.min(worldWidth * (0.055 + cut * 0.045), gap * 0.28 / Math.max(0.01, Math.abs(outX)));
-    const bend = outer ? 0 : Math.min(worldWidth * 0.115, gap * 0.22) * mix(0.78, 1.25, detail);
-    const turn = 0.8 * Math.sin(height / 58 + bendPhase) + 0.4 * fracture(height, 79, seed ^ 368);
-    const shoulderX = x + outX * inset * 0.58 + bend * turn * 0.62;
-    const recessX = x + outX * inset + bend * (0.28 * Math.sin(height / 92 - bendPhase) - turn * 0.72);
-    const shoulder = [shoulderX, y + outY * inset * 0.58, -worldWidth * (0.13 + cut * 0.06) * recessScale];
-    const recess = [recessX, y + outY * inset, -worldWidth * (RECESS_DEPTH + cut * RECESS_VARIATION) * recessScale];
-    if (onOuterEdge(point)) {
-      const [, renderedY] = surfacePoint(point);
-      for (const back of [shoulder, recess]) warped.set(back, [back[0], renderedY, back[2]]);
-    }
-    returns.set(point, [point, shoulder, recess]);
+    const targetDepth = worldWidth * (RECESS_DEPTH + cut * RECESS_VARIATION) * recessScale;
+    const drop = Math.max(worldWidth * MIN_RETURN_DEPTH, z + targetDepth);
+    const bevelInset = Math.min(worldWidth * 0.033, gap * 0.12);
+    const foldInset = Math.min(worldWidth * 0.063, gap * 0.24);
+    const backInset = Math.min(worldWidth * 0.047, gap * 0.17);
+    const bend = outer ? 0 : Math.min(worldWidth * 0.115, gap * 0.19) * mix(0.78, 1.25, detail);
+    const turn = 0.79 * Math.sin(height / 58 + bendPhase) + 0.42 * fracture(height, 79, seed ^ 368);
+    const foldDepth = mix(0.52, 0.6, detail) + mix(0.04, 0.19, detail)
+      * (0.55 * Math.sin(height / 48 + bendPhase) + 0.9 * fracture(height + x * 0.34, 76, seed ^ 817));
+
+    // The same rim vertex is carried through every cross-section of the loft.
+    const bevel = [x + outX * bevelInset, y + outY * bevelInset, z - Math.min(drop * 0.25, worldWidth * 0.055 * recessScale)];
+    const fold = [x + outX * foldInset + bend * turn, y + outY * foldInset, z - drop * foldDepth];
+    const back = [x + outX * backInset + bend * (0.33 * Math.sin(height / 92 - bendPhase) - turn * 0.63), y + outY * backInset, z - drop];
+    returns.set(point, [point, bevel, fold, back]);
   }
-  foldShortRimEdges(rims, returns, onOuterEdge, surfacePoint);
-  for (const { first, second, level } of makeReturnBands(rims, returns, surfacePoint)) {
-    for (const face of returnFaces(first.points, second.points, surfacePoint)) surface(face, level);
+  for (const [a, b] of rims) {
+    const from = returns.get(a);
+    const to = returns.get(b);
+    const layers = onOuterEdge(a) && onOuterEdge(b) ? [0, 3] : [0, 1, 2, 3];
+    for (let i = 1; i < layers.length; i += 1) {
+      const front = layers[i - 1];
+      const back = layers[i];
+      const quad = [to[front], from[front], from[back], to[back]];
+      for (const face of triangulateReturnQuad(quad, surfacePoint)) surface(face, i);
+    }
   }
 
   const geometry = new BufferGeometry();
