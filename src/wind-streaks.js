@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 
 const STREAK_COUNT = 3;
+const STREAK_DEPTH = 10;
 const between = (min, max) => min + Math.random() * (max - min);
 
 function createStreakTexture() {
@@ -31,8 +32,10 @@ function createStreakTexture() {
 }
 
 export class WindStreaks {
-  constructor(world, width) {
+  constructor(world, width, camera) {
     this.width = width;
+    this.camera = camera;
+    this.cameraPoint = new THREE.Vector3();
     const map = createStreakTexture();
     this.streaks = Array.from({ length: STREAK_COUNT }, (_, index) => {
       const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
@@ -50,7 +53,7 @@ export class WindStreaks {
     for (const streak of this.streaks) {
       streak.elapsed += dt;
       if (streak.elapsed < 0) continue;
-      if (!streak.sprite.visible) this.startStreak(streak);
+      if (!streak.sprite.visible) this.startStreak(streak, worldHeight);
 
       const progress = streak.elapsed / streak.duration;
       if (progress >= 1) {
@@ -63,24 +66,31 @@ export class WindStreaks {
       const x = streak.startX - progress * streak.travel;
       const y = streak.heightRatio * worldHeight + progress * streak.drift + Math.sin(angle) * streak.sway;
       const slope = streak.drift + Math.cos(angle) * streak.sway * Math.PI * 2;
-      streak.sprite.position.set(x, y, 10);
+      streak.sprite.position.set(x, y, STREAK_DEPTH);
       streak.sprite.material.rotation = Math.atan2(-slope, streak.travel);
-      const fade = Math.min(progress * 8, (1 - progress) * 6, 1);
-      streak.sprite.material.opacity = streak.opacity * fade;
     }
   }
 
-  startStreak(streak) {
-    const length = between(22, 46);
-    streak.startX = this.width - length / 2;
-    streak.travel = this.width - length;
-    streak.duration = streak.travel / between(210, 440);
+  startStreak(streak, worldHeight) {
+    const length = between(24, 54);
     streak.heightRatio = between(0.12, 0.88);
     streak.phase = between(0, Math.PI * 2);
     streak.drift = between(-9, 9);
     streak.sway = between(0.5, 2.3);
-    streak.opacity = between(0.34, 0.60);
-    streak.sprite.scale.set(length, between(1, 1.6), 1);
+    const centerX = this.width / 2;
+    const centerY = streak.heightRatio * worldHeight;
+    const verticalReach = Math.abs(streak.drift) + streak.sway;
+    const cameraDepthAt = (y) => -this.cameraPoint
+      .set(centerX, y, STREAK_DEPTH).applyMatrix4(this.camera.matrixWorldInverse).z;
+    const farthestDepth = Math.max(cameraDepthAt(centerY - verticalReach), cameraDepthAt(centerY + verticalReach));
+    const halfViewWidth = farthestDepth / this.camera.projectionMatrix.elements[0];
+    const thickness = between(1, 1.6);
+    const outside = halfViewWidth + Math.hypot(length, thickness) / 2 + 2;
+    streak.startX = centerX + outside;
+    streak.travel = 2 * outside;
+    streak.duration = streak.travel / between(210, 440);
+    streak.sprite.material.opacity = between(0.34, 0.60);
+    streak.sprite.scale.set(length, thickness, 1);
     streak.sprite.visible = true;
   }
 }

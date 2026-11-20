@@ -135,7 +135,7 @@ export class ThreeGame {
     this.setRandomSeed();
     this.createBackground();
     this.proceduralCliffs = new ProceduralCliffs(this.world);
-    this.windStreaks = new WindStreaks(this.world, this.config.world.width);
+    this.windStreaks = new WindStreaks(this.world, this.config.world.width, this.camera);
     this.createPlayer();
     this.platformGenerator = new PlatformGenerator({
       config: this.config,
