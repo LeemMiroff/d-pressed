@@ -9,11 +9,15 @@ import { GAME_STATES, GameSession } from './game-session.js';
 import { ENEMY_HIT_FLIGHT_SECONDS, updateCollectibleEntity, updateEnemyEntity } from './entity-systems.js';
 import { CARD_PRICE, CARD_PRICE_MULTIPLIER, REROLL_PRICE, drawRunCards } from './run-cards.js';
 import { PlayerFacing } from './player-facing.js';
-import { WindLeaves } from './wind-leaves.js';
+import { WindStreaks } from './wind-streaks.js';
 import { ENEMY_COLORS, createEnemyTexture, createChestTexture, mapBoxFront } from './entity-textures.js';
+import { fitStonePlatform } from './stone-platform.js';
+import { CliffBackground } from './cliff-background.js';
+import { maximumCliffRecess, ProceduralCliffs } from './procedural-cliffs.js';
 
 const STEP = 1 / 60;
 const PLATFORM_RESERVE = 2;
+const PLATFORM_SHADOW_LAYER = 2;
 const SHADOW_COVERAGE = Object.freeze({
   horizontalMargin: 24,
   topMargin: 48,
@@ -21,10 +25,12 @@ const SHADOW_COVERAGE = Object.freeze({
   depthMargin: 12,
   projectionPadding: 4,
 });
-const WALL_EMBED_INSET = 1;
+const MIN_PLATFORM_EDGE_EXTENSION = 7;
 const CRYSTAL_WIDTH = 6;
 const CRYSTAL_SPACING = CRYSTAL_WIDTH * 1.25;
-const CRYSTAL_RADIUS = 3.2;
+const BASE_CRYSTAL_RADIUS = 3.2;
+const CRYSTAL_SCALE = 1.2;
+const CRYSTAL_RADIUS = BASE_CRYSTAL_RADIUS * CRYSTAL_SCALE;
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const lerp = (from, to, amount) => from + (to - from) * amount;
 const overlap = (a, b) => a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
@@ -37,8 +43,25 @@ function sprite(texture, width, height) {
   return node;
 }
 
+function createCrystalGeometry() {
+  const geometry = new THREE.OctahedronGeometry(CRYSTAL_RADIUS, 0);
+  const { normal } = geometry.attributes;
+  const pink = [0xf95d9d, 0xea4b8b, 0xff6ba8, 0xf25498];
+  const raspberry = [0xc02969, 0xa82460, 0xb52b67, 0xc93275];
+  const tint = new THREE.Color();
+  const colors = [];
+  for (let i = 0; i < normal.count; i += 1) {
+    const quadrant = normal.getX(i) > 0 ? (normal.getZ(i) > 0 ? 0 : 1) : (normal.getZ(i) < 0 ? 2 : 3);
+    tint.setHex((normal.getY(i) > 0 ? pink : raspberry)[quadrant]);
+    colors.push(tint.r, tint.g, tint.b);
+  }
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  return geometry;
+}
+
 export class ThreeGame {
-  constructor(canvas, config) {
+  constructor(canvas, config, assets) {
+    this.assets = assets;
     this.canvas = canvas;
     this.config = config;
     this.scene = new THREE.Scene();
@@ -61,6 +84,8 @@ export class ThreeGame {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.keyLight.castShadow = true;
     this.keyLight.shadow.mapSize.set(1024, 1024);
+    this.keyLight.shadow.camera.layers.enable(PLATFORM_SHADOW_LAYER);
+    this.trailingPlatformShadows = [];
     this.applyLighting();
     this.input = { held: false };
     this.session = new GameSession();
@@ -68,6 +93,7 @@ export class ThreeGame {
     this.paused = false;
     this.gameOver = false;
     this.accumulator = 0;
+    this.maximumMode = false;
     this.worldHeight = config.world.height;
     this.worldSpeed = config.platforms.initialWorldSpeed;
     this.playerMixer = null;
@@ -108,7 +134,8 @@ export class ThreeGame {
     this.renderStats = { lastTime: performance.now(), elapsed: 0, frames: 0 };
     this.setRandomSeed();
     this.createBackground();
-    this.windLeaves = new WindLeaves(this.world, this.config.world.width);
+    this.proceduralCliffs = new ProceduralCliffs(this.world);
+    this.windStreaks = new WindStreaks(this.world, this.config.world.width, this.camera);
     this.createPlayer();
     this.platformGenerator = new PlatformGenerator({
       config: this.config,
@@ -234,7 +261,19 @@ export class ThreeGame {
     this.renderer.shadowMap.needsUpdate = true;
   }
 
+  applyCliffSettings() {
+    this.cliffBackground?.resize(this.config.world.width, this.worldHeight, this.config.platforms.depth, this.config.cliffs);
+  }
+
+  applyAtmosphereSettings() {
+    this.cliffBackground?.setAtmosphere(this.config.atmosphere);
+  }
+
   resizeBackgroundWall() {
+    if (this.cliffBackground) {
+      this.applyCliffSettings();
+      return;
+    }
     if (!this.backgroundWallSegments?.length) return;
     this.backgroundWallHeight = Math.max(this.worldHeight + 64, 280);
     this.backgroundWallOverlap = 1;
@@ -249,6 +288,11 @@ export class ThreeGame {
   }
 
   resetBackgroundWall() {
+    if (this.cliffBackground) {
+      this.cliffBackground.reset();
+      this.cliffBackground.render();
+      return;
+    }
     if (!this.backgroundWallSegments?.length) return;
     this.backgroundWallSegments.forEach((segment, index) => {
       segment.logicalTop = (index - 1) * this.backgroundWallHeight;
@@ -258,6 +302,10 @@ export class ThreeGame {
   }
 
   updateBackgroundWall(dt) {
+    if (this.cliffBackground) {
+      this.cliffBackground.advance(this.worldSpeed * dt);
+      return;
+    }
     if (!this.backgroundWallSegments?.length) return;
     for (const segment of this.backgroundWallSegments) segment.logicalTop -= this.worldSpeed * dt;
     const margin = Math.max(this.config.platforms.height * 2, 16);
@@ -271,6 +319,10 @@ export class ThreeGame {
   }
 
   applyBackgroundWallViews(alpha = 1) {
+    if (this.cliffBackground) {
+      this.cliffBackground.render(alpha);
+      return;
+    }
     if (!this.backgroundWallSegments?.length) return;
     for (const [index, segment] of this.backgroundWallSegments.entries()) {
       const previousTop = Number.isFinite(segment.renderPreviousLogicalTop) ? segment.renderPreviousLogicalTop : segment.logicalTop;
@@ -280,18 +332,17 @@ export class ThreeGame {
   }
 
   createBackground() {
-    this.sideWallWidth = 3;
-    this.sideWallCenterOffset = 2;
+    if (this.assets.cliff) {
+      this.cliffBackground = new CliffBackground(this.assets.cliff.geometry, this.config.atmosphere);
+      this.world.add(this.cliffBackground.group);
+      this.resizeBackgroundWall();
+      return;
+    }
+
     const wallMaterial = new THREE.MeshStandardMaterial({ color: 0x2c1d2a, roughness: 0.84, metalness: 0.05 });
     this.background = new THREE.Mesh(new THREE.BoxGeometry(this.config.world.width + 24, this.config.world.height + 24, 4), wallMaterial);
     this.background.receiveShadow = true;
     this.background.position.z = -8;
-    this.leftWall = new THREE.Mesh(new THREE.BoxGeometry(this.sideWallWidth, this.config.world.height + 24, 8), wallMaterial);
-    this.rightWall = new THREE.Mesh(new THREE.BoxGeometry(this.sideWallWidth, this.config.world.height + 24, 8), wallMaterial);
-    this.leftWall.receiveShadow = true;
-    this.rightWall.receiveShadow = true;
-    this.leftWall.position.set(-this.sideWallCenterOffset, this.config.world.height / 2, -2);
-    this.rightWall.position.set(this.config.world.width + this.sideWallCenterOffset, this.config.world.height / 2, -2);
     this.backgroundWallGroup = new THREE.Group();
     this.backgroundWallGroup.position.z = -2.4;
     this.backgroundWallSegments = [0, 1].map(() => {
@@ -304,7 +355,6 @@ export class ThreeGame {
       return { mesh, logicalTop: 0, renderPreviousLogicalTop: 0 };
     });
     this.world.add(this.background);
-    this.world.add(this.leftWall, this.rightWall);
     this.world.add(this.backgroundWallGroup);
     this.resizeBackgroundWall();
     this.loadBackgroundWallTexture();
@@ -312,7 +362,7 @@ export class ThreeGame {
 
   loadBackgroundWallTexture() {
     const loader = new THREE.TextureLoader();
-    loader.load('./assets/wall-brick.png', (texture) => {
+    loader.load(this.assets.wall, (texture) => {
       texture.colorSpace = THREE.SRGBColorSpace;
       texture.wrapS = THREE.RepeatWrapping;
       texture.wrapT = THREE.RepeatWrapping;
@@ -356,10 +406,12 @@ export class ThreeGame {
   }
 
   loadPlayerModel() {
-    const loader = new FBXLoader();
-    loader.setResourcePath('./assets/mini-chibi-kid/textures/');
+    const { model: playerModelUrl, character: playerTextureUrl } = this.assets;
+    const manager = new THREE.LoadingManager();
+    manager.setURLModifier((url) => /^(blob:|data:)/.test(url) ? url : playerTextureUrl);
+    const loader = new FBXLoader(manager);
     loader.load(
-      './assets/mini-chibi-kid/source/mini%20chibi%20kid.fbx',
+      playerModelUrl,
       (model) => {
         const bounds = new THREE.Box3().setFromObject(model);
         const sourceSize = bounds.getSize(new THREE.Vector3());
@@ -375,7 +427,7 @@ export class ThreeGame {
         this.playerView.add(model);
         this.playerFallbackView.visible = false;
         const characterTexture = new THREE.TextureLoader().load(
-          './assets/mini-chibi-kid/textures/base_texture_01.png?character-texture-v2',
+          playerTextureUrl,
           (texture) => {
             texture.colorSpace = THREE.SRGBColorSpace;
             texture.magFilter = THREE.NearestFilter;
@@ -451,6 +503,12 @@ export class ThreeGame {
     this.hubLandingMesh = this.makePlatformMesh(this.hubLanding.width, this.hubLanding.height, 0x72505c);
     this.hubLandingGroup = new THREE.Group();
     this.hubLandingGroup.add(this.hubLandingMesh);
+    if (this.assets.supports) {
+      this.assets.supports.attach(this.hub, this.hubGroup);
+      this.assets.supports.attach(this.hubLanding, this.hubLandingGroup);
+      this.configurePlatformSupport(this.hub, 1);
+      this.configurePlatformSupport(this.hubLanding, 0);
+    }
     this.world.add(this.hubLandingGroup);
     this.stations = [];
     this.stations.forEach((station) => this.hubGroup.add(station.node));
@@ -548,28 +606,72 @@ export class ThreeGame {
   }
 
   makePlatformMesh(width, height, color = 0xc7a8a4) {
+    const source = this.assets.platform;
     const mesh = new THREE.Mesh(
-      new THREE.BoxGeometry(width, height, this.config.platforms.depth),
-      new THREE.MeshStandardMaterial({ color, roughness: 0.72, metalness: 0.08 }),
+      source ? source.geometry.clone() : new THREE.BoxGeometry(1, 1, 1),
+      source?.material ?? new THREE.MeshStandardMaterial({ color, roughness: 0.72, metalness: 0.08 }),
     );
     mesh.castShadow = true;
     mesh.receiveShadow = true;
+    mesh.scale.y = height;
+    mesh.scale.z = this.config.platforms.depth;
+    this.setPlatformRenderWidth(mesh, width);
     return mesh;
   }
 
+  setPlatformRenderWidth(mesh, width) {
+    if (mesh.scale.x === width) return;
+    if (this.assets.platform) fitStonePlatform(mesh, this.assets.platform, width);
+    mesh.scale.x = width;
+  }
+
   createPool() {
-    const platformGeometry = new THREE.BoxGeometry(1, this.config.platforms.height, this.config.platforms.depth);
-    const platformMaterial = new THREE.MeshStandardMaterial({ color: 0xc7a8a4, roughness: 0.72, metalness: 0.08 });
+    const height = this.config.platforms.height;
+    const fallback = this.assets.platform ? null : this.makePlatformMesh(1, height);
     for (let index = 0; index < this.config.platforms.poolSize + PLATFORM_RESERVE; index += 1) {
       const node = new THREE.Group();
-      const mesh = new THREE.Mesh(platformGeometry, platformMaterial);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
+      const mesh = fallback?.clone() ?? this.makePlatformMesh(1, height);
       node.add(mesh);
       node.visible = false;
       this.world.add(node);
-      this.platforms.push({ node, mesh, x: 0, y: 0, width: 1, height: this.config.platforms.height, active: false, previousY: 0, renderPreviousX: 0, renderPreviousY: 0, patternType: 'SINGLE', spawnContent: {}, portalPlatform: false, recycledThisFrame: false, enemy: null, crystals: [], chest: null });
+      const platform = { node, mesh, x: 0, y: 0, width: 1, height: this.config.platforms.height, active: false, previousY: 0, renderPreviousX: 0, renderPreviousY: 0, patternType: 'SINGLE', spawnContent: {}, portalPlatform: false, recycledThisFrame: false, enemy: null, crystals: [], chest: null };
+      this.assets.supports?.attach(platform, node);
+      this.platforms.push(platform);
     }
+  }
+
+  configurePlatformSupport(platform, fixedVariant) {
+    this.assets.supports?.configure(platform, this.config, this.runSeed, fixedVariant);
+    platform.support?.layers.set(this.config.platformSupports.procedural ? 1 : 0);
+  }
+
+  applyPlatformSupportSettings() {
+    if (!this.assets.supports) return;
+    for (const platform of [this.hub, this.hubLanding, ...this.platforms]) {
+      this.assets.supports.resize(platform, this.config.platformSupports);
+    }
+    this.applyAllViews();
+  }
+
+  applyProceduralCliffSettings() {
+    const enabled = this.config.platformSupports.procedural;
+    this.proceduralCliffs.group.visible = enabled;
+    for (const platform of [this.hub, this.hubLanding, ...this.platforms]) platform.support?.layers.set(enabled ? 1 : 0);
+    this.proceduralCliffsDirty = true;
+    if (!enabled) this.proceduralCliffs.reset(this.proceduralCliffs.origin);
+    else this.applyProceduralCliffView(this.runDepth, true);
+  }
+
+  applyProceduralCliffView(scrolled, force = false) {
+    if (!this.config.platformSupports.procedural || this.proceduralCliffs.origin == null) return;
+    if (this.proceduralCliffsDirty || force) {
+      const ledges = this.platforms.filter((platform) => platform.active && platform.node.visible);
+      if (this.hubGroup.visible) ledges.push(this.hub);
+      if (this.hubLanding.active && this.hubLandingGroup.visible) ledges.push(this.hubLanding);
+      this.proceduralCliffs.sync(ledges, this.runDepth, this.config, this.worldHeight, this.runSeed, force);
+      this.proceduralCliffsDirty = false;
+    }
+    this.proceduralCliffs.render(scrolled, this.worldHeight);
   }
 
   createEntityPool() {
@@ -579,10 +681,20 @@ export class ThreeGame {
     const spikeGeometry = new THREE.ConeGeometry(0.85, 2.6, 4);
     const spikeMaterial = new THREE.MeshStandardMaterial({ color: 0xffd7ac });
     const chestGeometry = new THREE.BoxGeometry(10, 8, 6);
-    const crystalGeometry = new THREE.OctahedronGeometry(CRYSTAL_RADIUS, 0);
+    const crystalGeometry = createCrystalGeometry();
     mapBoxFront(chestGeometry);
     const chestMaterial = new THREE.MeshStandardMaterial({ map: createChestTexture(), roughness: 0.72 });
-    const crystalMaterial = new THREE.MeshStandardMaterial({ color: 0x5ad7ff, emissive: 0x0b5575, emissiveIntensity: 1.6, roughness: 0.22, metalness: 0.25 });
+    const crystalMaterial = new THREE.MeshStandardMaterial({
+      vertexColors: true, emissive: 0x801741, emissiveIntensity: 1.15, roughness: 0.22, metalness: 0.25,
+    });
+    const makeCrystalView = () => {
+      const view = new THREE.Mesh(crystalGeometry, crystalMaterial);
+      view.castShadow = true;
+      view.receiveShadow = true;
+      view.visible = false;
+      this.world.add(view);
+      return view;
+    };
     for (const platform of this.platforms) {
       const enemyView = new THREE.Mesh(enemyGeometry, new THREE.MeshStandardMaterial({ map: this.enemyTextures.static, roughness: 0.65 }));
       const spikes = new THREE.Group();
@@ -604,22 +716,14 @@ export class ThreeGame {
       this.entities.push({ kind: 'enemy', view: enemyView, platform: null, x: 0, y: 0, width: 8, height: 8, defeated: false, active: false, health: 3, hitFlightTimer: 0, renderOffsetX: 0, renderOffsetY: 0, renderOffsetZ: 0, rotation: 0, renderPreviousX: 0, renderPreviousY: 0, renderPreviousOffsetX: 0, renderPreviousOffsetY: 0, renderPreviousOffsetZ: 0, renderPreviousRotation: 0, dying: false, deathVelocityX: 0, deathVelocityY: 0, deathVelocityZ: 0, deathDepthRemaining: 0, deathRotation: 0 });
       this.entities.push({ kind: 'chest', view: chestView, platform: null, x: 0, y: 0, width: 10, height: 8, active: false, opened: false, triggerOnly: true, solid: false, renderPreviousX: 0, renderPreviousY: 0, renderPreviousOffsetX: 0, renderPreviousOffsetY: 0, renderPreviousRotation: 0 });
       for (let side = 0; side < 3; side += 1) {
-        const crystalView = new THREE.Mesh(crystalGeometry, crystalMaterial);
-        this.world.add(crystalView);
-        crystalView.castShadow = true;
-        crystalView.receiveShadow = true;
-        crystalView.visible = false;
+        const crystalView = makeCrystalView();
         const crystal = { kind: 'crystal', view: crystalView, platform: null, x: 0, y: 0, width: 6, height: 6, active: false, collecting: false, phase: 'idle', floorY: 0, velocityX: 0, velocityY: 0, elapsed: 0, startX: 0, startY: 0, platformOffset: this.config.crystals.platformOffset ?? 1, bobPhase: side * Math.PI, rotationSpeed: 0, rotation: 0, renderOffsetX: 0, renderOffsetY: 0, renderPreviousX: 0, renderPreviousY: 0, renderPreviousOffsetX: 0, renderPreviousOffsetY: 0, renderPreviousRotation: 0 };
         crystal.motion = new CrystalMotion(this, crystal);
         this.entities.push(crystal);
       }
     }
     for (let index = 0; index < 48; index += 1) {
-      const view = new THREE.Mesh(crystalGeometry, crystalMaterial);
-      this.world.add(view);
-      view.castShadow = true;
-      view.receiveShadow = true;
-      view.visible = false;
+      const view = makeCrystalView();
       const burst = { kind: 'burst', view, platform: null, x: 0, y: 0, width: 6, height: 6, active: false, phase: 'burst', floorY: 0, velocityX: 0, velocityY: 0, bounces: 0, elapsed: 0, startX: 0, startY: 0, counted: false, rotation: 0, rotationSpeed: 0, renderPreviousX: 0, renderPreviousY: 0, renderPreviousOffsetX: 0, renderPreviousOffsetY: 0, renderPreviousRotation: 0 };
       burst.motion = new CrystalMotion(this, burst);
       this.entities.push(burst);
@@ -629,7 +733,7 @@ export class ThreeGame {
   createUi() {
     this.ui = document.createElement('div');
     this.ui.className = 'three-ui';
-    this.ui.innerHTML = '<div class="three-ui__counter">CRYSTALS <strong data-crystals>0</strong></div><div class="three-ui__stats" aria-live="off">FPS <strong data-fps>--</strong><br>TRIANGLES <strong data-triangles>--</strong><br>VERTICES <strong data-vertices>--</strong></div><div class="three-ui__player-stats">SPEED <strong data-player-speed>0</strong> / <strong data-player-max-speed>0</strong><br>DAMAGE <strong data-player-damage>0</strong></div><div class="three-ui__hint">HOLD / D TO MOVE RIGHT · R TO RESTART</div><div class="three-ui__gameover" data-gameover hidden>GAME OVER<br><button type="button" data-restart>RESTART</button></div>';
+    this.ui.innerHTML = '<div class="three-ui__counter">CRYSTALS <strong data-crystals>0</strong></div><div class="three-ui__stats" aria-live="off">FPS <strong data-fps>--</strong><br>TRIANGLES <strong data-triangles>--</strong><br>VERTICES <strong data-vertices>--</strong></div><div class="three-ui__player-stats">SPEED <strong data-player-speed>0</strong> / <strong data-player-max-speed>0</strong><br>DAMAGE <strong data-player-damage>0</strong></div><div class="three-ui__hint">HOLD / D TO MOVE RIGHT · R TO RESTART · P FOR MAX MODE</div><div class="three-ui__gameover" data-gameover hidden>GAME OVER<br><button type="button" data-restart>RESTART</button></div>';
     document.body.append(this.ui);
     this.counter = this.ui.querySelector('[data-crystals]');
     this.fpsCounter = this.ui.querySelector('[data-fps]');
@@ -794,14 +898,13 @@ export class ThreeGame {
     this.camera.position.set(this.config.world.width / 2, targetY + Math.sin(tilt) * distance, Math.cos(tilt) * distance);
     this.camera.lookAt(this.config.world.width / 2, targetY, 0);
     this.camera.updateProjectionMatrix();
+    this.camera.updateMatrixWorld();
     this.renderer.setSize(viewportWidth, height, false);
-    this.background.scale.set(1, this.worldHeight / 240, 1);
-    this.background.position.set(this.config.world.width / 2, this.worldHeight / 2, -4);
+    if (this.background) {
+      this.background.scale.set(1, this.worldHeight / 240, 1);
+      this.background.position.set(this.config.world.width / 2, this.worldHeight / 2, -4);
+    }
     this.resizeBackgroundWall();
-    this.leftWall.scale.y = this.worldHeight / 240;
-    this.rightWall.scale.y = this.worldHeight / 240;
-    this.leftWall.position.set(-this.sideWallCenterOffset, this.worldHeight / 2, -2);
-    this.rightWall.position.set(this.config.world.width + this.sideWallCenterOffset, this.worldHeight / 2, -2);
     this.hub.y = this.hubTopY();
     this.hubLanding.y = this.hub.y + this.hub.height + this.config.platforms.minGap;
     this.hubLanding.previousY = this.hubLanding.y;
@@ -810,6 +913,8 @@ export class ThreeGame {
     this.applyHubLandingView();
     this.positionCardChoice();
     if (this.mode === 'hub') this.updateHubRouteVisibility();
+    this.proceduralCliffsDirty = true;
+    this.applyProceduralCliffView(this.runDepth, this.hubGroup.visible || (this.hubMoving && this.hubLandingGroup.visible));
     this.applyAllViews();
     this.resetRenderInterpolation();
   }
@@ -827,6 +932,7 @@ export class ThreeGame {
       this.applyPlatformView(platform);
     }
     this.applyBackgroundWallViews();
+    this.applyProceduralCliffView(this.runDepth);
     this.applyHubView();
     this.hubGroup.position.set(0, this.logicalY(this.hub.y + this.hub.height / 2), 0);
     this.applyHubLandingView();
@@ -835,6 +941,7 @@ export class ThreeGame {
   }
 
   captureRenderState() {
+    this.renderPreviousRunDepth = this.runDepth;
     this.player.renderPreviousX = this.player.x;
     this.player.renderPreviousY = this.player.y;
     this.hub.renderPreviousY = this.hub.y;
@@ -843,6 +950,7 @@ export class ThreeGame {
       platform.renderPreviousX = platform.x;
       platform.renderPreviousY = platform.y;
     }
+    this.cliffBackground?.capture();
     for (const segment of this.backgroundWallSegments || []) segment.renderPreviousLogicalTop = segment.logicalTop;
     for (const entity of this.entities) this.captureEntityRenderState(entity);
   }
@@ -875,6 +983,9 @@ export class ThreeGame {
       );
     }
     this.applyBackgroundWallViews(blend);
+    const scrolled = lerp(this.renderPreviousRunDepth ?? this.runDepth, this.runDepth, blend);
+    this.applyProceduralCliffView(scrolled);
+    this.updateTrailingPlatformShadows(scrolled);
     this.applyHubView();
     const hubY = lerp(this.hub.renderPreviousY ?? this.hub.y, this.hub.y, blend);
     this.hubGroup.position.set(0, this.logicalY(hubY + this.hub.height / 2), 0);
@@ -887,38 +998,39 @@ export class ThreeGame {
     for (const entity of this.entities) this.applyInterpolatedEntityView(entity, blend);
   }
 
-  wallPlatformExtensions(platform) {
-    if (!platform) return { left: 0, right: 0 };
+  platformEdgeExtensions(platform) {
     const worldWidth = this.config.world.width;
-    const leftWallOuterEdge = this.leftWall.position.x - (this.sideWallWidth * this.leftWall.scale.x) / 2;
-    const rightWallOuterEdge = this.rightWall.position.x + (this.sideWallWidth * this.rightWall.scale.x) / 2;
     const configuredMaxWidth = Number(this.config.platforms.maxWidth);
-    const embedLimit = Number.isFinite(configuredMaxWidth) && configuredMaxWidth > 0 ? configuredMaxWidth : platform.width;
-    const embedDepth = Math.max(this.sideWallWidth * 2, Math.min(platform.width, embedLimit));
-    const left = platform.x <= 0.001 ? Math.max(-leftWallOuterEdge, embedDepth) + WALL_EMBED_INSET : 0;
-    const right = platform.x + platform.width >= worldWidth - 0.001 ? Math.max(rightWallOuterEdge - worldWidth, embedDepth) + WALL_EMBED_INSET : 0;
+    const widthLimit = Number.isFinite(configuredMaxWidth) && configuredMaxWidth > 0 ? configuredMaxWidth : platform.width;
+    // Extend the render mesh past the camera edge while keeping the collider inside the world.
+    const extension = Math.max(MIN_PLATFORM_EDGE_EXTENSION, Math.min(platform.width, widthLimit) + 1);
+    const left = platform.x <= 0.001 ? extension : 0;
+    const right = platform.x + platform.width >= worldWidth - 0.001 ? extension : 0;
     return { left, right };
   }
 
   applyPlatformView(platform, renderX = platform.x, renderY = platform.y) {
-    const { left, right } = this.wallPlatformExtensions(platform);
+    const { left, right } = this.platformEdgeExtensions(platform);
     const renderWidth = platform.width + left + right;
     platform.node.position.set(renderX - left + renderWidth / 2, this.logicalY(renderY + platform.height / 2), 0);
-    platform.mesh.scale.set(renderWidth, 1, 1);
+    this.setPlatformRenderWidth(platform.mesh, renderWidth);
+    if (platform.support?.visible) platform.support.position.x = left - renderWidth / 2 + platform.supportOffset;
   }
 
   applyHubView() {
-    const { left, right } = this.wallPlatformExtensions(this.hub);
+    const { left, right } = this.platformEdgeExtensions(this.hub);
     const renderWidth = this.hub.width + left + right;
     this.hubMesh.position.x = this.hub.x - left + renderWidth / 2;
-    this.hubMesh.scale.set(renderWidth, 1, 1);
+    this.setPlatformRenderWidth(this.hubMesh, renderWidth);
+    if (this.hub.support) this.hub.support.position.x = this.hub.x + this.hub.supportOffset;
   }
 
   applyHubLandingView(renderY = this.hubLanding.y) {
-    const { left, right } = this.wallPlatformExtensions(this.hubLanding);
+    const { left, right } = this.platformEdgeExtensions(this.hubLanding);
     const renderWidth = this.hubLanding.width + left + right;
     this.hubLandingGroup.position.set(this.hubLanding.x - left + renderWidth / 2, this.logicalY(renderY + this.hubLanding.height / 2), 0);
-    this.hubLandingMesh.scale.set(renderWidth / this.hubLanding.width, 1, 1);
+    this.setPlatformRenderWidth(this.hubLandingMesh, renderWidth);
+    if (this.hubLanding.support) this.hubLanding.support.position.x = left - renderWidth / 2 + this.hubLanding.supportOffset;
   }
 
   configurePlatform(platform, x, y, width, type = 'SINGLE') {
@@ -935,6 +1047,8 @@ export class ThreeGame {
     platform.node.visible = true;
     platform.renderPreviousX = platform.x;
     platform.renderPreviousY = platform.y;
+    this.configurePlatformSupport(platform);
+    this.proceduralCliffsDirty = true;
     this.applyPlatformView(platform);
   }
 
@@ -1000,6 +1114,7 @@ export class ThreeGame {
   }
 
   randomWidth() {
+    if (this.maximumMode) return Math.max(8, Math.floor(this.config.platforms.minWidth));
     return this.platformGenerator.randomWidth(this.activeRunTime, this.patternCount);
   }
 
@@ -1063,6 +1178,16 @@ export class ThreeGame {
     }
   }
 
+  restartWithMaximumMode(enabled) {
+    this.maximumMode = enabled;
+    this.restart();
+  }
+
+  getMaximumWorldSpeed() {
+    const flow = this.config.platforms;
+    return Math.max(0, Number(flow.initialWorldSpeed) || 0, Number(flow.maxWorldSpeed) || 0, Number(flow.targetWorldSpeed) || 0);
+  }
+
   restart(preserveProgression = false, startInHub = true) {
     this.closeCardChoice();
     this.input.held = false;
@@ -1079,7 +1204,7 @@ export class ThreeGame {
       this.patternRepeatCount = 0;
       this.lastWallSide = null;
       this.wallSideRepeatCount = 0;
-      this.worldSpeed = this.config.platforms.initialWorldSpeed;
+      this.worldSpeed = this.maximumMode ? this.getMaximumWorldSpeed() : this.config.platforms.initialWorldSpeed;
       this.crystalCount = this.config.crystals.startingCount || 0;
       this.damage = 1;
       this.cardLevels = {};
@@ -1117,6 +1242,9 @@ export class ThreeGame {
     this.hubLanding.y = this.hub.y + this.hub.height + this.config.platforms.minGap;
     this.hubLanding.previousY = this.hubLanding.y;
     this.hubLanding.active = true;
+    this.proceduralCliffs.reset(this.hub.y + this.runDepth - 104);
+    this.proceduralCliffs.group.visible = this.config.platformSupports.procedural;
+    this.updateTrailingPlatformShadows(this.runDepth, true);
     this.resetBackgroundWall();
     this.clearEntities();
     this.generateInitial(preserveProgression);
@@ -1131,6 +1259,7 @@ export class ThreeGame {
     this.hubLanding.previousY = this.hubLanding.y;
     this.updateHubRouteVisibility();
     this.hubLandingGroup.visible = true;
+    this.proceduralCliffsDirty = true;
     this.player.groundedOn = this.hub;
     this.player.x = 2;
     this.player.y = this.hub.y - this.player.height;
@@ -1209,7 +1338,7 @@ export class ThreeGame {
     while (this.accumulator >= STEP && steps < 16) { this.fixedUpdate(STEP); this.accumulator -= STEP; steps += 1; }
     if (!this.gameOver && !this.choosingCard) this.updatePlayerFacing(Math.min(dt, 0.1));
     if (this.playerMixer) this.playerMixer.update(Math.min(dt, 0.1));
-    this.windLeaves.update(Math.min(dt, 0.1), this.worldHeight);
+    this.windStreaks.update(Math.min(dt, 0.1), this.worldHeight);
     this.playerSpeedCounter.textContent = Math.abs(this.player.vx).toFixed(1);
     this.playerMaxSpeedCounter.textContent = String(this.getPlayerHorizontalSpeed());
     this.playerDamageCounter.textContent = String(this.damage + this.cardBonus('damage'));
@@ -1249,7 +1378,9 @@ export class ThreeGame {
     this.difficultyTime += dt;
     this.activeRunTime += dt;
     const flow = this.config.platforms;
-    if (flow.useFlowProgression) {
+    if (this.maximumMode) {
+      this.worldSpeed = this.getMaximumWorldSpeed();
+    } else if (flow.useFlowProgression) {
       const initialSpeed = Number(flow.initialWorldSpeed) || 0;
       const targetSpeed = Number(flow.targetWorldSpeed) || initialSpeed;
       const duration = Math.max(0.001, Number(flow.targetWorldSpeedTime) || 1);
@@ -1272,9 +1403,11 @@ export class ThreeGame {
       this.hubLanding.y -= this.worldSpeed * dt;
       const offscreenMargin = this.getPlatformOffscreenMargin();
       if (this.hub.y + this.hub.height < -offscreenMargin) {
+        this.retainPlatformShadow(this.hub, this.hubMesh, this.hubGroup);
         this.hubGroup.visible = false;
       }
       if (this.hubLanding.y + this.hubLanding.height < -offscreenMargin) {
+        this.retainPlatformShadow(this.hubLanding, this.hubLandingMesh, this.hubLandingGroup);
         this.hubLandingGroup.visible = false;
         this.hubLanding.active = false;
       }
@@ -1303,7 +1436,9 @@ export class ThreeGame {
   }
 
   getPlayerHorizontalSpeed() {
-    return Math.max(0, Number(this.config.player.maxHorizontalSpeed) || 0) + this.speedUpgrade + this.cardBonus('speed');
+    const baseSpeed = Math.max(0, Number(this.config.player.maxHorizontalSpeed) || 0);
+    if (this.maximumMode) return Math.max(baseSpeed, Number(this.config.upgrades.speedMaximum) || 0);
+    return baseSpeed + this.speedUpgrade + this.cardBonus('speed');
   }
 
   updateVertical(dt) {
@@ -1347,9 +1482,55 @@ export class ThreeGame {
       0,
       Number(this.config.platforms.maxGap) || Number(this.config.platforms.minGap) || 0,
     );
-    // Keep a platform alive for one full inter-platform gap after it clears
-    // the visible area so its cast shadow can leave the screen naturally.
-    return Math.max(platformHeight * 2, platformHeight + segmentGap);
+    // Keep two rows of platforms above the screen so their shadows can scroll out.
+    return 2 * (platformHeight + segmentGap);
+  }
+
+  getTrailingShadowMargin() {
+    // Compare the top of the view at platform depth and at the far end of its shadow.
+    const depth = this.config.platforms.depth / 2;
+    const recess = maximumCliffRecess(this.config.world.width, this.config.platformSupports);
+    const light = this.keyLight.position.clone().sub(this.keyLight.target.position).normalize();
+    const topRay = new THREE.Vector3(0, 1, 0.5).unproject(this.camera).sub(this.camera.position);
+    const topAt = (z) => this.camera.position.y + (z - this.camera.position.z) * topRay.y / topRay.z;
+    const casterZ = light.z >= 0 ? depth : -depth;
+    const projectionDepth = light.z >= 0 ? depth * 2 + recess : depth * 2;
+    const reach = Math.min(this.keyLight.shadow.camera.far, projectionDepth / Math.max(Math.abs(light.z), 1e-6));
+    const shadowTop = topAt(casterZ - reach * light.z) + reach * light.y;
+    return Math.max(topAt(casterZ), shadowTop) - this.worldHeight + SHADOW_COVERAGE.projectionPadding;
+  }
+
+  retainPlatformShadow(platform, source, node) {
+    if (!this.config.platformSupports.procedural || !this.keyLight.castShadow || !source.castShadow || !node.visible) return;
+    const bottom = platform.y + platform.height;
+    if (-bottom >= this.getTrailingShadowMargin()) return;
+
+    source.updateWorldMatrix(true, false);
+    // The route can reuse the platform while the light still sees its old shape.
+    const mesh = new THREE.Mesh(source.geometry.clone(), source.material);
+    source.matrixWorld.decompose(mesh.position, mesh.quaternion, mesh.scale);
+    mesh.position.y = this.logicalY(platform.y + platform.height / 2) + source.position.y;
+    mesh.layers.set(PLATFORM_SHADOW_LAYER);
+    mesh.castShadow = true;
+    this.world.add(mesh);
+    this.trailingPlatformShadows.push({ mesh, bottom, y: mesh.position.y, atDepth: this.runDepth });
+  }
+
+  updateTrailingPlatformShadows(scrolled, clear = false) {
+    if (this.trailingPlatformShadows.length === 0) return;
+    const margin = clear || !this.config.platformSupports.procedural || !this.keyLight.castShadow
+      ? -Infinity : this.getTrailingShadowMargin();
+    for (let i = this.trailingPlatformShadows.length - 1; i >= 0; i -= 1) {
+      const { mesh, bottom, y, atDepth } = this.trailingPlatformShadows[i];
+      const offset = scrolled - atDepth;
+      if (offset - bottom >= margin) {
+        this.world.remove(mesh);
+        mesh.geometry.dispose();
+        this.trailingPlatformShadows.splice(i, 1);
+      } else {
+        mesh.position.y = y + offset;
+      }
+    }
   }
 
   isGroupOffscreen(group) {
@@ -1384,7 +1565,7 @@ export class ThreeGame {
   }
 
   configureSingleGroup(group, y, type, previousPlatform, gap) {
-    const width = this.activeRunTime < this.config.platforms.platformProgressionDuration
+    const width = !this.maximumMode && this.activeRunTime < this.config.platforms.platformProgressionDuration
       ? this.randomProgressiveWidth()
       : this.randomWidth();
     const placement = this.singleGroupPlacement(type, width, previousPlatform, gap);
@@ -1432,6 +1613,7 @@ export class ThreeGame {
       const gap = this.randomBetween(this.config.platforms.minGap, this.config.platforms.maxGap);
       const previousPlatform = lowest || (this.hubLanding.active ? this.hubLanding : null);
       const y = this.nextRouteY(previousPlatform, gap);
+      for (const platform of group) this.retainPlatformShadow(platform, platform.mesh, platform.node);
 
       if (group.length > 1 && requestedType !== 'DOUBLE') {
         const first = group[0];
@@ -1593,10 +1775,13 @@ export class ThreeGame {
     const desired = roll < tripleChance ? 3 : roll < tripleChance + chance(doubleCluster) ? 2 : 1;
     const capacity = Math.max(0, 1 + Math.floor((platform.width - CRYSTAL_WIDTH) / CRYSTAL_SPACING));
     const count = Math.min(desired, capacity);
-    const clusterWidth = CRYSTAL_WIDTH + (count - 1) * CRYSTAL_SPACING;
+    if (count === 0) return;
+    const crystalDiameter = Math.min(CRYSTAL_RADIUS * 2, platform.width);
+    const spacing = count > 1 ? clamp((platform.width - crystalDiameter) / (count - 1), CRYSTAL_SPACING, CRYSTAL_SPACING * CRYSTAL_SCALE) : 0;
+    const clusterWidth = Math.min(platform.width, crystalDiameter + (count - 1) * spacing);
     const freeWidth = platform.width - clusterWidth;
     const platformCenter = platform.x + platform.width / 2;
-    const startX = platform.x + freeWidth * (platformCenter < this.config.world.width / 2 ? 0.75 : 0.25);
+    const startX = platform.x + freeWidth * (platformCenter < this.config.world.width / 2 ? 0.75 : 0.25) + (crystalDiameter - CRYSTAL_WIDTH) / 2;
     const available = this.entities.filter((candidate) => candidate.kind === 'crystal' && !candidate.active && !candidate.platform).slice(0, count);
     if (available.length < count) return;
     for (let side = 0; side < count; side += 1) {
@@ -1604,7 +1789,7 @@ export class ThreeGame {
       const view = entity.view;
       const platformOffset = Number(this.config.crystals.platformOffset);
       entity.platform = platform;
-      entity.x = startX + side * CRYSTAL_SPACING;
+      entity.x = startX + side * spacing;
       entity.platformOffset = Number.isFinite(platformOffset) ? Math.max(0, platformOffset) : 1;
       entity.y = platform.y - entity.platformOffset;
       entity.floorY = entity.y;
@@ -1831,8 +2016,7 @@ export class ThreeGame {
     const offsetX = entity.renderOffsetX || 0;
     const offsetY = entity.renderOffsetY || 0;
     const offsetZ = entity.renderOffsetZ || 0;
-    const renderLayer = this.entityRenderLayer(entity);
-    entity.view.position.set(entity.x + (entity.width || 0) / 2 + offsetX, this.logicalY(entity.y - (entity.height || 0) / 2 - offsetY), renderLayer + offsetZ);
+    this.positionEntityView(entity, entity.x, entity.y, offsetX, offsetY, offsetZ);
     const platformVisible = !entity.platform || entity.platform.node.visible;
     entity.view.visible = entity.active !== false && (!entity.defeated || entity.dying) && platformVisible;
   }
@@ -1841,6 +2025,15 @@ export class ThreeGame {
     if (entity.kind === 'crystal') return this.config.platforms.depth / 2 - CRYSTAL_RADIUS;
     if (entity.kind === 'burst') return entity.phase === 'counter' ? 4 : 2;
     return 1;
+  }
+
+  positionEntityView(entity, x, y, offsetX, offsetY, offsetZ) {
+    const lift = entity.kind === 'crystal' || entity.kind === 'burst' ? CRYSTAL_RADIUS - BASE_CRYSTAL_RADIUS : 0;
+    entity.view.position.set(
+      x + (entity.width || 0) / 2 + offsetX,
+      this.logicalY(y - (entity.height || 0) / 2 - offsetY - lift),
+      this.entityRenderLayer(entity) + offsetZ,
+    );
   }
 
   applyInterpolatedEntityView(entity, alpha) {
@@ -1852,8 +2045,7 @@ export class ThreeGame {
     const offsetZ = lerp(entity.renderPreviousOffsetZ ?? 0, entity.renderOffsetZ || 0, alpha);
     const currentRotation = Number.isFinite(entity.rotation) ? entity.rotation : entity.view.rotation.z;
     const rotation = lerp(entity.renderPreviousRotation ?? currentRotation, currentRotation, alpha);
-    const renderLayer = this.entityRenderLayer(entity);
-    entity.view.position.set(x + (entity.width || 0) / 2 + offsetX, this.logicalY(y - (entity.height || 0) / 2 - offsetY), renderLayer + offsetZ);
+    this.positionEntityView(entity, x, y, offsetX, offsetY, offsetZ);
     if (entity.kind === 'crystal' || entity.kind === 'burst') entity.view.rotation.y = rotation;
     else entity.view.rotation.z = rotation;
     const platformVisible = !entity.platform || entity.platform.node.visible;

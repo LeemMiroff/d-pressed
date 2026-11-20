@@ -1,5 +1,8 @@
 import { RUN_CARDS } from './run-cards.js';
 
+export const CLIFF_LIMITS = Object.freeze({ minScale: 0.7, maxScale: 1.45, minGap: -20, maxGap: 100, maxSpeed: 2 });
+export const SUPPORT_SCALE_LIMITS = Object.freeze({ min: 0.6, max: 2.6 });
+
 export const CONFIG = Object.freeze({
   cards: Object.fromEntries(RUN_CARDS.map(({ id, bonus }) => [id, { enabled: true, grantImmediately: false, bonus }])),
   world: {
@@ -158,6 +161,34 @@ export const CONFIG = Object.freeze({
     shadowBias: -0.0005,
     shadowNormalBias: 0.03,
     shadowsEnabled: true,
+  },
+  cliffs: {
+    nearScale: 1,
+    nearGap: -3.5,
+    nearSpeed: 0.62,
+    farScale: 1,
+    farGap: 18,
+    farSpeed: 0.34,
+  },
+  atmosphere: {
+    skyTop: 0x87b8e2,
+    skyBottom: 0x426a98,
+    nearHazeColor: 0x263c60,
+    nearHazeAmount: 0.40,
+    farHazeColor: 0x668ec2,
+    farHazeAmount: 0.66,
+  },
+  platformSupports: {
+    widthScale: 1.65,
+    heightScale: 1.35,
+    procedural: true,
+    rockCoverage: 0.54,
+    openingSize: 0.56,
+    facetSize: 24,
+    facetStretch: 1.45,
+    fractureStrength: 0.58,
+    recessDepth: 1,
+    mountBlend: 1,
   },
   render: {
     baseWidth: 480,
