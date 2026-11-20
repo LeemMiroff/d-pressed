@@ -1,4 +1,5 @@
 import { RUN_CARDS } from './run-cards.js';
+import { CLIFF_LIMITS, SUPPORT_SCALE_LIMITS } from './config.js';
 
 const TAB_DEFINITIONS = [
   ['flow', 'Поток'],
@@ -7,9 +8,13 @@ const TAB_DEFINITIONS = [
   ['cards', 'Карточки'],
   ['camera', 'Камера'],
   ['lighting', 'Свет'],
+  ['world', 'Мир'],
+  ['cliffs', 'Скалы'],
   ['presets', 'Пресеты'],
   ['debug', 'Диагностика'],
 ];
+
+const asColorInput = (color) => `#${Math.round(Math.max(0, Math.min(0xffffff, color))).toString(16).padStart(6, '0')}`;
 
 export class ThreeInspector {
   constructor(config, game) {
@@ -52,6 +57,22 @@ export class ThreeInspector {
           <label class="inspector__check"><input type="checkbox" data-shadows>Тени</label>
           <div data-controls="lighting"></div>
         </section>
+        <section class="inspector__panel" id="inspector-panel-world" data-panel="world" role="tabpanel" tabindex="0">
+          <strong>Небо</strong>
+          <div data-controls="sky"></div>
+          <strong>Дымка на фоновых скалах</strong>
+          <p class="inspector__hint">Плотность задаёт, насколько цвет дымки смешивается с цветом скал.</p>
+          <div data-controls="atmosphere-near"></div>
+          <div data-controls="atmosphere-far"></div>
+        </section>
+        <section class="inspector__panel" id="inspector-panel-cliffs" data-panel="cliffs" role="tabpanel" tabindex="0">
+          <p class="inspector__hint">Глубина ниже нуля подаёт скалы вперёд. Скорость 1 — как у платформ, 0 — без прокрутки.</p>
+          <div data-controls="cliffs"></div>
+          <strong>Скалы под платформами</strong>
+          <label class="inspector__check"><input type="checkbox" data-procedural-cliffs>Генеративные скалы</label>
+          <div data-controls="procedural-cliffs"></div>
+          <div data-controls="supports"></div>
+        </section>
         <section class="inspector__panel" id="inspector-panel-presets" data-panel="presets" role="tabpanel" tabindex="0">
           <div class="inspector__preset">
             <input type="text" data-preset-name placeholder="Имя нового пресета" aria-label="Имя нового пресета">
@@ -86,6 +107,13 @@ export class ThreeInspector {
     this.increaseWorldSpeedInput = this.root.querySelector('[data-increase-world-speed]');
     this.flowProgressionInput = this.root.querySelector('[data-flow-progression]');
     this.shadowsInput = this.root.querySelector('[data-shadows]');
+    this.proceduralCliffsInput = this.root.querySelector('[data-procedural-cliffs]');
+    this.proceduralCliffsInput.checked = config.platformSupports.procedural;
+    this.proceduralCliffsInput.addEventListener('change', () => {
+      config.platformSupports.procedural = this.proceduralCliffsInput.checked;
+      this.refreshSupportControls();
+      game.applyProceduralCliffSettings();
+    });
     this.panels = Object.fromEntries([...this.root.querySelectorAll('[data-panel]')].map((panel) => [panel.dataset.panel, panel]));
 
     this.bindTooltip(this.pairedInput.closest('.inspector__check'), 'Разрешает генератору создавать две платформы на одной высоте, если это допускает текущая прогрессия.');
@@ -104,6 +132,8 @@ export class ThreeInspector {
       character: 'Масштаб визуальной модели и скорость её анимации.',
       camera: 'Поле зрения, наклон, дистанция и вертикальный центр камеры.',
       lighting: 'Интенсивность, положение света и параметры теней.',
+      world: 'Цвет неба и дымка на двух фоновых слоях.',
+      cliffs: 'Настройки фоновых скал и опор платформ.',
       presets: 'Сохранение, применение и перезапись наборов настроек.',
       debug: 'Текущий режим игры, скорость потока и счётчики прогрессии.',
     };
@@ -135,6 +165,13 @@ export class ThreeInspector {
       game.applyLighting();
     });
 
+    const colors = [
+      ['atmosphere.skyTop', 'Небо сверху', 'sky', 'Цвет верхней части градиента за фоновыми скалами.'],
+      ['atmosphere.skyBottom', 'Небо снизу', 'sky', 'Цвет нижней части градиента за фоновыми скалами.'],
+      ['atmosphere.nearHazeColor', 'Цвет ближней дымки', 'atmosphere-near', 'Оттенок дымки на ближнем фоновом слое.'],
+      ['atmosphere.farHazeColor', 'Цвет дальней дымки', 'atmosphere-far', 'Оттенок дымки на дальнем фоновом слое.'],
+    ];
+    colors.forEach((color) => this.addColorControl(...color));
     const definitions = [
       ['platforms.initialWorldSpeed', 'Начальная скорость', 1, 120, 1, 'flow', 'Скорость подъёма платформ в начале забега.'],
       ['platforms.worldSpeedIncrease', 'Ускорение мира', 0, 10, 0.01, 'flow', 'Сколько мировых единиц в секунду добавляется к скорости в ручном режиме.'],
@@ -172,8 +209,26 @@ export class ThreeInspector {
       ['lighting.fillPositionX', 'Заполняющий свет X', -240, 240, 1, 'lighting', 'Горизонтальная позиция дополнительного света.'],
       ['lighting.fillPositionY', 'Заполняющий свет Y', -240, 360, 1, 'lighting', 'Вертикальная позиция дополнительного света.'],
       ['lighting.fillPositionZ', 'Заполняющий свет Z', -240, 360, 1, 'lighting', 'Позиция дополнительного света по глубине сцены.'],
+      ['atmosphere.nearHazeAmount', 'Плотность ближней дымки', 0, 1, 0.01, 'atmosphere-near', '0 сохраняет исходные оттенки скал, 1 полностью окрашивает слой выбранным цветом.'],
+      ['atmosphere.farHazeAmount', 'Плотность дальней дымки', 0, 1, 0.01, 'atmosphere-far', 'Чем выше значение, тем ближе дальние скалы по цвету к выбранной дымке.'],
+      ['cliffs.nearScale', 'Масштаб ближних', CLIFF_LIMITS.minScale, CLIFF_LIMITS.maxScale, 0.01, 'cliffs', 'Размер ближних скал. 1 — исходный масштаб.'],
+      ['cliffs.nearGap', 'Глубина ближних', CLIFF_LIMITS.minGap, CLIFF_LIMITS.maxGap, 0.5, 'cliffs', 'Уменьшите глубину ниже нуля, чтобы ближние скалы зашли под заднюю часть платформ.'],
+      ['cliffs.nearSpeed', 'Скорость ближних', 0, CLIFF_LIMITS.maxSpeed, 0.01, 'cliffs', 'Скорость прокрутки ближних скал относительно платформ.'],
+      ['cliffs.farScale', 'Масштаб дальних', CLIFF_LIMITS.minScale, CLIFF_LIMITS.maxScale, 0.01, 'cliffs', 'Размер дальних скал. 1 — исходный масштаб.'],
+      ['cliffs.farGap', 'Глубина дальних', CLIFF_LIMITS.minGap, CLIFF_LIMITS.maxGap, 0.5, 'cliffs', 'Меньше — ближе к платформам, больше — дальше в фон.'],
+      ['cliffs.farSpeed', 'Скорость дальних', 0, CLIFF_LIMITS.maxSpeed, 0.01, 'cliffs', 'Скорость прокрутки дальних скал относительно платформ.'],
+      ['platformSupports.widthScale', 'Ширина опор', SUPPORT_SCALE_LIMITS.min, SUPPORT_SCALE_LIMITS.max, 0.05, 'supports', 'Горизонтальный масштаб скал, к которым прикреплены платформы.'],
+      ['platformSupports.heightScale', 'Высота опор', SUPPORT_SCALE_LIMITS.min, SUPPORT_SCALE_LIMITS.max, 0.05, 'supports', 'Вертикальный масштаб опор. Точка крепления остаётся у платформы.'],
+      ['platformSupports.rockCoverage', 'Ширина скалы', 0.25, 0.95, 0.01, 'procedural-cliffs', 'Ширина участка породы за платформами. Больше — меньше фона по бокам.'],
+      ['platformSupports.openingSize', 'Ширина проёма', 0.15, 0.68, 0.01, 'procedural-cliffs', 'Размер сквозного проёма внутри участка породы.'],
+      ['platformSupports.facetSize', 'Размер граней', 16, 34, 1, 'procedural-cliffs', 'Расстояние между крупными изломами в игровых единицах.'],
+      ['platformSupports.facetStretch', 'Вытянутость граней', 0.9, 1.8, 0.05, 'procedural-cliffs', 'Удлиняет крупные плоскости вдоль скалы.'],
+      ['platformSupports.fractureStrength', 'Резкость изломов', 0, 1, 0.05, 'procedural-cliffs', 'Меняет неровность проёма, рельеф граней и повороты стенок в глубине.'],
+      ['platformSupports.recessDepth', 'Глубина загиба', 0.6, 1.4, 0.05, 'procedural-cliffs', 'Масштаб глубины стенок внутри проёма.'],
+      ['platformSupports.mountBlend', 'Адаптация к платформам', 0.65, 1.4, 0.05, 'procedural-cliffs', 'Задаёт, насколько далеко от точки крепления меняется скала.'],
     ];
     definitions.forEach((definition) => this.addControl(...definition));
+    this.refreshSupportControls();
     const cardControls = this.root.querySelector('[data-controls="cards"]');
     for (const card of RUN_CARDS) {
       const controls = [
@@ -262,6 +317,21 @@ export class ThreeInspector {
     target[keys.at(-1)] = value;
   }
 
+  addColorControl(path, label, category, description) {
+    const row = document.createElement('label');
+    row.className = 'inspector__row';
+    row.innerHTML = `<span>${label}</span><input type="color" aria-label="${label}">`;
+    const input = row.querySelector('input');
+    input.dataset.colorSetting = path;
+    input.value = asColorInput(this.read(path));
+    input.addEventListener('input', () => {
+      this.write(path, Number.parseInt(input.value.slice(1), 16));
+      this.game.applyAtmosphereSettings();
+    });
+    this.bindTooltip(row, description);
+    this.root.querySelector(`[data-controls="${category}"]`).append(row);
+  }
+
   addControl(path, label, min, max, step = 1, category = 'flow', description = '') {
     const row = document.createElement('label');
     row.className = 'inspector__row';
@@ -284,6 +354,22 @@ export class ThreeInspector {
         this.game.applyLighting();
         return;
       }
+      if (path.startsWith('atmosphere.')) {
+        this.game.applyAtmosphereSettings();
+        return;
+      }
+      if (category === 'cliffs') {
+        this.game.applyCliffSettings();
+        return;
+      }
+      if (category === 'procedural-cliffs') {
+        this.game.applyProceduralCliffSettings();
+        return;
+      }
+      if (category === 'supports') {
+        this.game.applyPlatformSupportSettings();
+        return;
+      }
       if (path === 'player.visualScale' || path === 'player.animationSpeed') {
         this.game.applyPlayerVisualSettings();
         return;
@@ -299,16 +385,25 @@ export class ThreeInspector {
   }
 
   captureSettings() {
-    const payload = Object.fromEntries([...this.root.querySelectorAll('.inspector__row')].map((row) => [row.dataset.path, Number(row.querySelector('input[type=number]').value)]));
+    const payload = Object.fromEntries([...this.root.querySelectorAll('.inspector__row[data-path]')].map((row) => [row.dataset.path, Number(row.querySelector('input[type=number]').value)]));
+    for (const input of this.root.querySelectorAll('[data-color-setting]')) {
+      payload[input.dataset.colorSetting] = Number.parseInt(input.value.slice(1), 16);
+    }
     payload['platforms.enablePairedPlatforms'] = this.pairedInput.checked;
     payload['platforms.hubPortal.enabled'] = this.portalsInput.checked;
     payload['platforms.increaseWorldSpeed'] = this.increaseWorldSpeedInput.checked;
     payload['platforms.useFlowProgression'] = this.flowProgressionInput.checked;
     payload['lighting.shadowsEnabled'] = this.shadowsInput.checked;
+    payload['platformSupports.procedural'] = this.proceduralCliffsInput.checked;
     for (const checkbox of this.root.querySelectorAll('[data-card-setting]')) {
       payload[checkbox.dataset.cardSetting] = checkbox.checked;
     }
     return payload;
+  }
+
+  refreshSupportControls() {
+    this.root.querySelector('[data-controls="procedural-cliffs"]').hidden = !this.proceduralCliffsInput.checked;
+    this.root.querySelector('[data-controls="supports"]').hidden = this.proceduralCliffsInput.checked;
   }
 
   async save() {
@@ -391,7 +486,13 @@ export class ThreeInspector {
       this.write(path, values[path]);
       checkbox.checked = values[path];
     }
-    for (const row of this.root.querySelectorAll('.inspector__row')) {
+    for (const input of this.root.querySelectorAll('[data-color-setting]')) {
+      const value = values[input.dataset.colorSetting];
+      if (!Number.isInteger(value) || value < 0 || value > 0xffffff) continue;
+      this.write(input.dataset.colorSetting, value);
+      input.value = asColorInput(value);
+    }
+    for (const row of this.root.querySelectorAll('.inspector__row[data-path]')) {
       const value = values[row.dataset.path];
       if (!Number.isFinite(value)) continue;
       this.write(row.dataset.path, value);
@@ -418,8 +519,16 @@ export class ThreeInspector {
       this.config.lighting.shadowsEnabled = values['lighting.shadowsEnabled'];
       this.shadowsInput.checked = values['lighting.shadowsEnabled'];
     }
+    if (typeof values['platformSupports.procedural'] === 'boolean') {
+      this.config.platformSupports.procedural = values['platformSupports.procedural'];
+      this.proceduralCliffsInput.checked = values['platformSupports.procedural'];
+      this.refreshSupportControls();
+    }
     this.game.applyLighting();
+    this.game.applyAtmosphereSettings();
     this.game.applyPlayerVisualSettings();
+    this.game.applyPlatformSupportSettings();
+    this.game.applyProceduralCliffSettings();
     this.game.resize();
     this.game.restart(true, false);
   }
@@ -428,6 +537,10 @@ export class ThreeInspector {
     const now = performance.now();
     if (now - this.lastTelemetryAt < 100) return;
     this.lastTelemetryAt = now;
-    this.telemetry.innerHTML = `<dt>Режим</dt><dd>${this.game.mode}</dd><dt>Скорость потока</dt><dd>${this.game.worldSpeed.toFixed(1)}</dd><dt>Паттерны</dt><dd>${this.game.patternCount}</dd><dt>Кристаллы</dt><dd>${this.game.crystalCount}</dd>`;
+    const lastBuild = this.game.proceduralCliffs.lastBuild;
+    const rockStats = lastBuild
+      ? `<dt>Сборка секции скалы</dt><dd>${lastBuild.ms.toFixed(2)} мс</dd><dt>Вершины секции</dt><dd>${lastBuild.vertices}</dd><dt>Треугольники секции</dt><dd>${lastBuild.triangles}</dd>`
+      : '';
+    this.telemetry.innerHTML = `<dt>Режим</dt><dd>${this.game.mode}</dd><dt>Скорость потока</dt><dd>${this.game.worldSpeed.toFixed(1)}</dd><dt>Паттерны</dt><dd>${this.game.patternCount}</dd><dt>Кристаллы</dt><dd>${this.game.crystalCount}</dd>${rockStats}`;
   }
 }

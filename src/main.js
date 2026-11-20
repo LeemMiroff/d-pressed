@@ -1,21 +1,55 @@
 import './style.css';
+import wall from '../public/assets/wall-brick.png?url&inline';
+import model from '../public/assets/mini-chibi-kid/source/mini chibi kid.fbx?url&inline';
+import character from '../public/assets/mini-chibi-kid/textures/base_texture_01.png?url&inline';
+import stonePlatform from '../public/models/stone-study/stone-platform.glb?url&inline';
+import cliffMass from '../public/models/stone-study/cliff-mass.glb?url&inline';
+import lowSpur from '../public/models/stone-study/support-low-spur.glb?url&inline';
+import splitPillar from '../public/models/stone-study/support-split-pillar.glb?url&inline';
+import brokenTerrace from '../public/models/stone-study/support-broken-terrace.glb?url&inline';
 import { ThreeGame, loadThreeConfig } from './three-engine.js';
 import { ThreeInspector } from './three-inspector.js';
+import { loadStonePlatform } from './stone-platform.js';
+import { loadStoneGeometry } from './stone-geometry.js';
+import { loadPlatformSupports } from './platform-supports.js';
 
 async function start() {
   const mount = document.querySelector('#app');
   const canvas = document.createElement('canvas');
   canvas.setAttribute('aria-label', 'Игровое поле');
   mount.append(canvas);
-  const config = await loadThreeConfig();
-  const game = new ThreeGame(canvas, config);
+  const [config, platform, cliff, supports] = await Promise.all([
+    loadThreeConfig(),
+    loadStonePlatform(stonePlatform).catch((error) => {
+      console.warn('D-PRESSED stone platform failed to load, using fallback boxes', error);
+      return null;
+    }),
+    loadStoneGeometry(cliffMass).catch((error) => {
+      console.warn('D-PRESSED cliff background failed to load, using brick wall', error);
+      return null;
+    }),
+    loadPlatformSupports([lowSpur, splitPillar, brokenTerrace]).catch((error) => {
+      console.warn('D-PRESSED platform supports failed to load', error);
+      return null;
+    }),
+  ]);
+  const game = new ThreeGame(canvas, config, { wall, model, character, platform, cliff, supports });
   const inspector = new ThreeInspector(config, game);
   let pointerId = null;
   const setHeld = (held) => { game.input.held = held; };
   canvas.addEventListener('pointerdown', (event) => { pointerId = event.pointerId; canvas.setPointerCapture?.(pointerId); setHeld(true); if (game.gameOver) game.restart(); }, { passive: false });
   canvas.addEventListener('pointerup', (event) => { if (event.pointerId === pointerId) { pointerId = null; setHeld(false); } }, { passive: false });
   canvas.addEventListener('pointercancel', () => { pointerId = null; setHeld(false); }, { passive: false });
-  window.addEventListener('keydown', (event) => { if (event.code === 'KeyD' || ['d', 'д'].includes(event.key?.toLowerCase())) { event.preventDefault(); setHeld(true); } if (event.code === 'KeyR' && !event.repeat) { event.preventDefault(); game.restart(); } });
+  window.addEventListener('keydown', (event) => {
+    if (event.code === 'KeyD' || ['d', 'д'].includes(event.key?.toLowerCase())) {
+      event.preventDefault();
+      setHeld(true);
+    }
+    if (!event.repeat && (event.code === 'KeyP' || event.code === 'KeyR')) {
+      event.preventDefault();
+      game.restartWithMaximumMode(event.code === 'KeyP');
+    }
+  });
   window.addEventListener('keyup', (event) => { if (event.code === 'KeyD' || ['d', 'д'].includes(event.key?.toLowerCase())) { event.preventDefault(); setHeld(false); } });
   window.addEventListener('blur', () => { setHeld(false); game.pause(); });
   window.addEventListener('focus', () => { game.resume(); last = performance.now(); });
