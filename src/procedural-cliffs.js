@@ -1,5 +1,5 @@
 import { BufferGeometry, Float32BufferAttribute, Group, Mesh, MeshStandardMaterial, ShapeUtils, Vector2, Vector3 } from 'three';
-import { addCliffSurfaceAttributes, applyCliffWear } from './cliff-surface.js';
+import { addCliffSurfaceAttributes, applyCliffWear, CANYON_ROCK_COLOR } from './cliff-surface.js';
 
 const SECTION_HEIGHT = 150;
 const ROCK_RELIEF = 3;
@@ -9,7 +9,6 @@ const RECESS_DEPTH = 0.31;
 const RECESS_VARIATION = 0.08;
 const MIN_RETURN_DEPTH = 0.025;
 const SEAM_OFFSET_LIMIT = 24;
-const ROCK_COLOR = 0x59617e;
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const mix = (a, b, t) => a + (b - a) * t;
 const smooth = (t) => t * t * (3 - 2 * t);
@@ -681,6 +680,13 @@ export function buildCliffSection(start, end, ledges, worldWidth, settings, seed
   return { geometry, start, end, mounts, bridge, frontAspect: { ...frontAspect, panels: frontPanels.size } };
 }
 
+function sameCliffSurface(previous, next) {
+  const matches = (a, b) => a.length === b.length && a.every((value, index) => value === b[index]);
+  return matches(previous.getAttribute('position').array, next.getAttribute('position').array)
+    && matches(previous.getAttribute('normal').array, next.getAttribute('normal').array)
+    && matches(previous.userData.facetIds, next.userData.facetIds);
+}
+
 export class ProceduralCliffs {
   constructor(world, wearTexture) {
     this.group = new Group();
@@ -689,7 +695,7 @@ export class ProceduralCliffs {
     this.sections = new Map();
     this.mountBands = new Map();
     this.lastBuild = null;
-    this.material = new MeshStandardMaterial({ color: ROCK_COLOR, roughness: 0.94 });
+    this.material = new MeshStandardMaterial({ color: CANYON_ROCK_COLOR, roughness: 0.94 });
     this.wearTexture = wearTexture;
     if (wearTexture) applyCliffWear(this.material, wearTexture);
   }
@@ -744,6 +750,12 @@ export class ProceduralCliffs {
       if (current && !force && mountingKeys.size === current.mountingKeys.size && [...mountingKeys].every((id) => current.mountingKeys.has(id))) continue;
       const before = performance.now();
       const rock = buildCliffSection(start, start + SECTION_HEIGHT, nearby.map(([, ledge]) => ledge), config.world.width, config.platformSupports, seed, key);
+      // A new mount in the apron can leave the clipped rock exactly as it was.
+      if (current && !force && sameCliffSurface(current.geometry, rock.geometry)) {
+        current.mountingKeys = mountingKeys;
+        rock.geometry.dispose();
+        continue;
+      }
       if (this.wearTexture) addCliffSurfaceAttributes(rock.geometry, start);
       const vertices = rock.geometry.getAttribute('position').count;
       this.lastBuild = { ms: performance.now() - before, vertices, triangles: vertices / 3 };

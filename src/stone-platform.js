@@ -1,11 +1,31 @@
-import { MeshStandardMaterial } from 'three';
+import { Color, Float32BufferAttribute, MeshStandardMaterial } from 'three';
 import { loadStoneGeometry } from './stone-geometry.js';
+import { addCliffSurfaceAttributes, applyCliffWear, CANYON_ROCK_COLOR } from './cliff-surface.js';
 
-export async function loadStonePlatform(url) {
-  const { geometry, size } = await loadStoneGeometry(url);
+function paintPlatformPart(part, material) {
+  // The GLB uses slate materials only beneath the pale limestone cap.
+  const slate = material.name.startsWith('Stone |');
+  const colors = part.getAttribute('color');
+  part.setAttribute('platformSlate', new Float32BufferAttribute(new Float32Array(colors.count).fill(Number(slate)), 1));
+  if (slate) {
+    const { r, g, b } = new Color(CANYON_ROCK_COLOR);
+    for (let i = 0; i < colors.count; i += 1) colors.setXYZ(i, r, g, b);
+  }
+}
+
+export async function loadStonePlatform(url, wearTextureReady) {
+  const [{ geometry, size }, wearTexture] = await Promise.all([
+    loadStoneGeometry(url, { decoratePart: paintPlatformPart }), wearTextureReady,
+  ]);
+  const material = new MeshStandardMaterial({ vertexColors: true, roughness: 0.94 });
+  if (wearTexture) {
+    addCliffSurfaceAttributes(geometry, 0, 1, size.toArray());
+    applyCliffWear(material, wearTexture, 1, { platform: true });
+  }
   return {
     geometry,
-    material: new MeshStandardMaterial({ vertexColors: true, roughness: 0.88 }),
+    material,
+    hasWear: Boolean(wearTexture),
     widthToHeight: size.x / size.y,
   };
 }
@@ -28,6 +48,7 @@ export function fitStonePlatform(mesh, source, width) {
   }
   positions.needsUpdate = true;
   mesh.geometry.computeVertexNormals();
+  if (source.hasWear) addCliffSurfaceAttributes(mesh.geometry, 0, 1, [width, mesh.scale.y, mesh.scale.z]);
   mesh.geometry.computeBoundingBox();
   mesh.geometry.computeBoundingSphere();
 }

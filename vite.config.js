@@ -1,6 +1,9 @@
 import { readFile, writeFile } from 'node:fs/promises';
+import { isAbsolute, relative, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 
+const PUBLIC_DIR = fileURLToPath(new URL('./public/', import.meta.url));
 const SETTINGS_FILE = new URL('./settings.json', import.meta.url);
 const PUBLIC_SETTINGS_FILE = new URL('./public/settings.json', import.meta.url);
 const PRESETS_FILE = new URL('./public/presets.json', import.meta.url);
@@ -82,4 +85,12 @@ function settingsPlugin() {
 export default defineConfig({
   base: './',
   plugins: [settingsPlugin()],
+  build: {
+    assetsInlineLimit(filePath) {
+      // Vite 7 resolves a root public URL to a file before checking ?inline.
+      // Keep these imported assets embedded for the standalone offline.html.
+      const pathInPublic = relative(PUBLIC_DIR, filePath);
+      if (pathInPublic && pathInPublic !== '..' && !pathInPublic.startsWith(`..${sep}`) && !isAbsolute(pathInPublic)) return true;
+    },
+  },
 });

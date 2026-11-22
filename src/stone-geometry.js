@@ -2,7 +2,7 @@ import { Float32BufferAttribute, Vector3 } from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
-export async function loadStoneGeometry(url, { normalize = true } = {}) {
+export async function loadStoneGeometry(url, { normalize = true, decoratePart } = {}) {
   const { scene } = await new GLTFLoader().loadAsync(url);
   scene.updateMatrixWorld(true);
   const parts = [];
@@ -18,6 +18,7 @@ export async function loadStoneGeometry(url, { normalize = true } = {}) {
       colors[i + 2] = b;
     }
     part.setAttribute('color', new Float32BufferAttribute(colors, 3));
+    decoratePart?.(part, mesh.material);
     parts.push(part);
   });
 

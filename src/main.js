@@ -1,15 +1,15 @@
 import './style.css';
-import wall from '../public/assets/wall-brick.png?url&inline';
-import model from '../public/assets/mini-chibi-kid/source/mini chibi kid.fbx?url&inline';
-import character from '../public/assets/mini-chibi-kid/textures/base_texture_01.png?url&inline';
-import stonePlatform from '../public/models/stone-study/stone-platform.glb?url&inline';
-import cliffMass from '../public/models/stone-study/cliff-mass.glb?url&inline';
-import lowSpur from '../public/models/stone-study/support-low-spur.glb?url&inline';
-import splitPillar from '../public/models/stone-study/support-split-pillar.glb?url&inline';
-import brokenTerrace from '../public/models/stone-study/support-broken-terrace.glb?url&inline';
-import foliageAtlas from '../public/assets/platform-foliage/foliage-atlas.png?url&inline';
-import grassNoise from '../public/assets/platform-foliage/grass-noise.png?url&inline';
-import rockWear from '../public/assets/stone/rock-wear.png?url&inline';
+import wall from '/assets/wall-brick.png?url&inline';
+import model from '/assets/mini-chibi-kid/source/mini chibi kid.fbx?url&inline';
+import character from '/assets/mini-chibi-kid/textures/base_texture_01.png?url&inline';
+import stonePlatform from '/models/stone-study/stone-platform.glb?url&inline';
+import cliffMass from '/models/stone-study/cliff-mass.glb?url&inline';
+import lowSpur from '/models/stone-study/support-low-spur.glb?url&inline';
+import splitPillar from '/models/stone-study/support-split-pillar.glb?url&inline';
+import brokenTerrace from '/models/stone-study/support-broken-terrace.glb?url&inline';
+import foliageAtlas from '/assets/platform-foliage/foliage-atlas.png?url&inline';
+import grassNoise from '/assets/platform-foliage/grass-noise.png?url&inline';
+import rockWear from '/assets/stone/rock-wear.png?url&inline';
 import { ThreeGame, loadThreeConfig } from './three-engine.js';
 import { ThreeInspector } from './three-inspector.js';
 import { loadStonePlatform } from './stone-platform.js';
@@ -30,7 +30,7 @@ async function start() {
   const [config, cliffWear, platform, cliff, supports, foliage] = await Promise.all([
     loadThreeConfig(),
     cliffWearReady,
-    loadStonePlatform(stonePlatform).catch((error) => {
+    loadStonePlatform(stonePlatform, cliffWearReady).catch((error) => {
       console.warn('D-PRESSED stone platform failed to load, using fallback boxes', error);
       return null;
     }),

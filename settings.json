@@ -14,7 +14,7 @@
   "camera.centerOffset": 8,
   "platforms.enablePairedPlatforms": true,
   "platforms.hubPortal.enabled": true,
-  "_savedAt": 1795197138422,
+  "_savedAt": 1795284071760,
   "platforms.hubPortal.everyPatterns": 40,
   "platforms.hubPortal.platformWidthRatio": 0.4,
   "lighting.ambientIntensity": 1,
@@ -85,5 +85,7 @@
   "foliageWind.speed": 3,
   "foliageWind.sway": 1,
   "foliageWind.gustiness": 1,
-  "foliageWind.enabled": true
+  "foliageWind.enabled": true,
+  "platformSupports.middleContourSpread": 1,
+  "platformSupports.backContourSpread": 1
 }

@@ -1,15 +1,34 @@
 import { BufferAttribute, RepeatWrapping, TextureLoader } from 'three';
 
+export const CANYON_ROCK_COLOR = 0x59617e;
+
 export async function loadCliffWear(url) {
   const texture = await new TextureLoader().loadAsync(url);
   texture.wrapS = texture.wrapT = RepeatWrapping;
   return texture;
 }
 
-export function addCliffSurfaceAttributes(geometry, start = 0, scale = 1) {
+export function addCliffSurfaceAttributes(geometry, start = 0, scale = 1, dimensions) {
   const { position, normal } = geometry.attributes;
-  const positions = position.array;
-  const normals = normal.array;
+  let positions = position.array;
+  let normals = normal.array;
+  if (dimensions) {
+    const [x, y, z] = dimensions;
+    positions = new Float32Array(positions.length);
+    normals = new Float32Array(normals.length);
+    for (let i = 0; i < positions.length; i += 3) {
+      positions[i] = position.array[i] * x;
+      positions[i + 1] = position.array[i + 1] * y;
+      positions[i + 2] = position.array[i + 2] * z;
+      const nx = normal.array[i] / x;
+      const ny = normal.array[i + 1] / y;
+      const nz = normal.array[i + 2] / z;
+      const length = Math.hypot(nx, ny, nz) || 1;
+      normals[i] = nx / length;
+      normals[i + 1] = ny / length;
+      normals[i + 2] = nz / length;
+    }
+  }
   const facetIds = geometry.userData.facetIds;
   const distances = new Float32Array(positions.length).fill(8);
   const strengths = new Float32Array(positions.length);
@@ -18,8 +37,12 @@ export function addCliffSurfaceAttributes(geometry, start = 0, scale = 1) {
   const uv = new Float32Array(position.count * 2);
   const lines = new Map();
   const joints = new Map();
-  const lineKey = (values) => values.map((value) => Math.round(value * 1000)).join(',');
-  const pointKey = (offset) => lineKey([positions[offset], positions[offset + 1], positions[offset + 2]]);
+  const quantize = (value) => Math.round(value * 1000);
+  const pointKeys = new Array(position.count);
+  const pointKey = (offset) => {
+    const vertex = offset / 3;
+    return pointKeys[vertex] ??= `${quantize(positions[offset])},${quantize(positions[offset + 1])},${quantize(positions[offset + 2])}`;
+  };
   for (let face = 0; face < positions.length; face += 9) {
     for (let corner = 0; corner < 3; corner += 1) {
       const a = face + ((corner + 1) % 3) * 3;
@@ -35,7 +58,8 @@ export function addCliffSurfaceAttributes(geometry, start = 0, scale = 1) {
       const y = sign * dy / length;
       const z = sign * dz / length;
       const projection = positions[a] * x + positions[a + 1] * y + positions[a + 2] * z;
-      const key = lineKey([x, y, z, positions[a] - projection * x, positions[a + 1] - projection * y, positions[a + 2] - projection * z]);
+      const key = `${quantize(x)},${quantize(y)},${quantize(z)},`
+        + `${quantize(positions[a] - projection * x)},${quantize(positions[a + 1] - projection * y)},${quantize(positions[a + 2] - projection * z)}`;
       const end = projection + sign * length;
       const px = positions[tip] - positions[a];
       const py = positions[tip + 1] - positions[a + 1];
@@ -96,17 +120,26 @@ export function addCliffSurfaceAttributes(geometry, start = 0, scale = 1) {
     }
   }
   for (let i = 0; i < position.count; i += 1) {
-    uv[i * 2] = (position.getX(i) + 0.58 * position.getZ(i)) * scale / 38;
-    uv[i * 2 + 1] = ((position.getY(i) + 0.32 * position.getZ(i)) * scale - start) / 56;
+    const j = i * 3;
+    uv[i * 2] = (positions[j] + 0.58 * positions[j + 2]) * scale / 38;
+    uv[i * 2 + 1] = ((positions[j + 1] + 0.32 * positions[j + 2]) * scale - start) / 56;
   }
-  geometry.setAttribute('cliffEdgeDistance', new BufferAttribute(distances, 3));
-  geometry.setAttribute('cliffEdgeStrength', new BufferAttribute(strengths, 3));
-  geometry.setAttribute('cliffCornerDistance', new BufferAttribute(cornerDistances, 3));
-  geometry.setAttribute('cliffCornerStrength', new BufferAttribute(cornerStrengths, 3));
-  geometry.setAttribute('cliffWearUV', new BufferAttribute(uv, 2));
+  for (const [name, values, size] of [
+    ['cliffEdgeDistance', distances, 3], ['cliffEdgeStrength', strengths, 3],
+    ['cliffCornerDistance', cornerDistances, 3], ['cliffCornerStrength', cornerStrengths, 3],
+    ['cliffWearUV', uv, 2],
+  ]) {
+    const attribute = geometry.getAttribute(name);
+    if (attribute?.array.length === values.length) {
+      attribute.array.set(values);
+      attribute.needsUpdate = true;
+    } else {
+      geometry.setAttribute(name, new BufferAttribute(values, size));
+    }
+  }
 }
-export function applyCliffWear(material, texture, intensity = 1) {
-  material.customProgramCacheKey = () => 'cliff-edge-wear';
+export function applyCliffWear(material, texture, intensity = 1, { platform = false } = {}) {
+  material.customProgramCacheKey = () => platform ? 'platform-edge-wear' : 'cliff-edge-wear';
   material.onBeforeCompile = (shader) => {
     shader.uniforms.cliffWear = { value: texture };
     shader.uniforms.cliffWearIntensity = { value: intensity };
@@ -121,6 +154,7 @@ export function applyCliffWear(material, texture, intensity = 1) {
       varying vec3 wearCornerDistance;
       varying vec3 wearCornerStrength;
       varying vec2 wearUV;
+      ${platform ? 'attribute float platformSlate; varying float wearSlate;' : ''}
     ` + shader.vertexShader.replace('#include <begin_vertex>', `
       #include <begin_vertex>
       wearEdgeDistance = cliffEdgeDistance;
@@ -128,6 +162,7 @@ export function applyCliffWear(material, texture, intensity = 1) {
       wearCornerDistance = cliffCornerDistance;
       wearCornerStrength = cliffCornerStrength;
       wearUV = cliffWearUV;
+      ${platform ? 'wearSlate = platformSlate;' : ''}
     `);
     shader.fragmentShader = `
       uniform sampler2D cliffWear;
@@ -137,22 +172,33 @@ export function applyCliffWear(material, texture, intensity = 1) {
       varying vec3 wearCornerDistance;
       varying vec3 wearCornerStrength;
       varying vec2 wearUV;
+      ${platform ? 'varying float wearSlate;' : ''}
     ` + shader.fragmentShader.replace('#include <color_fragment>', `
       #include <color_fragment>
+      float wearIntensity = ${platform ? 'mix(0.48, cliffWearIntensity, wearSlate)' : 'cliffWearIntensity'};
+      float wearDistanceScale = ${platform ? 'mix(1.9, 1.0, wearSlate)' : '1.0'};
       float wear = texture2D(cliffWear, wearUV).r;
-      vec3 edgeCore = vec3(1.0) - smoothstep(vec3(0.08), vec3(0.62 + 0.45 * wear), wearEdgeDistance);
-      vec3 edgeFalloff = vec3(1.0) - smoothstep(vec3(0.1), vec3(1.7 + 1.5 * wear), wearEdgeDistance);
+      vec3 edgeDistance = wearEdgeDistance * wearDistanceScale;
+      vec3 edgeCore = vec3(1.0) - smoothstep(vec3(0.08), vec3(0.62 + 0.45 * wear), edgeDistance);
+      vec3 edgeFalloff = vec3(1.0) - smoothstep(vec3(0.1), vec3(1.7 + 1.5 * wear), edgeDistance);
       vec3 highlight = (0.64 * edgeCore + 0.36 * edgeFalloff) * wearEdgeStrength;
-      vec3 joint = (1.0 - smoothstep(vec3(0.04), vec3(0.75 + 0.8 * wear), wearCornerDistance)) * wearCornerStrength;
+      vec3 joint = (1.0 - smoothstep(vec3(0.04), vec3(0.75 + 0.8 * wear), wearCornerDistance * wearDistanceScale)) * wearCornerStrength;
       highlight = max(highlight, joint);
       float edgeLight = max(max(highlight.x, highlight.y), highlight.z) * (0.48 + 0.52 * wear);
-      diffuseColor.rgb *= mix(1.0, 0.9 + wear * 0.22, cliffWearIntensity);
-      diffuseColor.rgb += edgeLight * cliffWearIntensity * vec3(0.091, 0.093, 0.120);
+      diffuseColor.rgb *= mix(1.0, 0.9 + wear * 0.22, wearIntensity);
+      diffuseColor.rgb += edgeLight * wearIntensity * vec3(0.091, 0.093, 0.120);
+      ${platform ? `
+      float cornerLight = max(max(joint.x, joint.y), joint.z);
+      vec3 litRim = edgeCore * wearEdgeStrength;
+      float rimLight = max(max(litRim.x, litRim.y), litRim.z);
+      float warmLight = max(cornerLight, 0.42 * rimLight) * (1.0 - wearSlate);
+      diffuseColor.rgb += warmLight * vec3(0.14, 0.098, 0.053);
+      ` : ''}
     `);
     if (material.isMeshStandardMaterial) {
       shader.fragmentShader = shader.fragmentShader.replace('#include <emissivemap_fragment>', `
         #include <emissivemap_fragment>
-        totalEmissiveRadiance += edgeLight * cliffWearIntensity * vec3(0.007, 0.008, 0.012);
+        totalEmissiveRadiance += edgeLight * wearIntensity * vec3(0.007, 0.008, 0.012);
       `);
     }
   };

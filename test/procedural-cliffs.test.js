@@ -182,3 +182,17 @@ test('scrolling discards geometry outside the retained range and keeps the seam 
   assert.equal(upper.mesh.position.y - 150, lower.mesh.position.y);
   assertSharedFacets(upper, lower);
 });
+
+test('a distant mount reuses the unchanged cliff section and rebuilds the affected one', () => {
+  const scenery = new ProceduralCliffs(new Group());
+  scenery.reset(0);
+  scenery.sync([], 0, CONFIG, 240, seed);
+  const first = scenery.sections.get(0).geometry;
+  const next = scenery.sections.get(1).geometry;
+
+  scenery.sync([{ x: 9, width: 26, y: 274 }], 0, CONFIG, 240, seed);
+
+  assert.equal(scenery.sections.get(0).geometry, first);
+  assert.notEqual(scenery.sections.get(1).geometry, next);
+  scenery.reset(0);
+});

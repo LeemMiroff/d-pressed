@@ -207,8 +207,9 @@ function makeGrassMaterial(baseMaterial, noise) {
   const material = baseMaterial.clone();
   const grassEdge = new Color(0x7f8c48);
   const grassCore = new Color(0x9fa94f);
-  material.customProgramCacheKey = () => 'platform-grass-noise';
+  material.customProgramCacheKey = () => `platform-grass-noise:${baseMaterial.customProgramCacheKey()}`;
   material.onBeforeCompile = (shader) => {
+    baseMaterial.onBeforeCompile(shader);
     shader.uniforms.grassNoise = { value: noise };
     shader.uniforms.grassEdge = { value: grassEdge };
     shader.uniforms.grassCore = { value: grassCore };
@@ -252,7 +253,9 @@ export class PlatformFoliage {
     this.plantMaterial = new MeshBasicMaterial({
       name: 'Painted platform plants',
       map: atlas,
-      alphaTest: 0.28,
+      transparent: true,
+      depthWrite: false,
+      alphaTest: 0.02,
     });
     this.plantMaterial.customProgramCacheKey = () => 'platform-plant-wind';
     this.plantMaterial.onBeforeCompile = (shader) => {

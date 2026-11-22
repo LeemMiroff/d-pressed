@@ -1624,7 +1624,14 @@ export class ThreeGame {
 
     source.updateWorldMatrix(true, false);
     // The route can reuse the platform while the light still sees its old shape.
-    const mesh = new THREE.Mesh(source.geometry.clone(), source.material);
+    // The opaque shadow caster only needs positions and the triangle order.
+    const shape = source.geometry;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', shape.getAttribute('position').clone());
+    if (shape.index) geometry.setIndex(shape.index.clone());
+    geometry.setDrawRange(shape.drawRange.start, shape.drawRange.count);
+    geometry.boundingSphere = shape.boundingSphere?.clone() ?? null;
+    const mesh = new THREE.Mesh(geometry, source.material);
     source.matrixWorld.decompose(mesh.position, mesh.quaternion, mesh.scale);
     mesh.position.y = this.logicalY(platform.y + platform.height / 2) + source.position.y;
     mesh.layers.set(PLATFORM_SHADOW_LAYER);
