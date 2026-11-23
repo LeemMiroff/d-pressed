@@ -1,5 +1,6 @@
 import { RUN_CARDS } from './run-cards.js';
 import { CLIFF_LIMITS, FOLIAGE_WIND_LIMITS, SUPPORT_SCALE_LIMITS } from './config.js';
+import { migrateSettings } from './config-store.js';
 
 const TAB_DEFINITIONS = [
   ['flow', 'Поток'],
@@ -197,7 +198,7 @@ export class ThreeInspector {
       ['platforms.hubPortal.everyPatterns', 'Портал каждые паттерны', 1, 200, 1, 'flow', 'Через сколько сгенерированных паттернов появляется пара порталов в хаб.'],
       ['platforms.hubPortal.platformWidthRatio', 'Ширина платформ портала', 0.2, 0.49, 0.01, 'flow', 'Доля ширины мира, которую занимает каждая платформа у порталов.'],
       ['player.maxHorizontalSpeed', 'Скорость игрока', 1, 120, 1, 'player', 'Максимальная горизонтальная скорость игрока.'],
-      ['player.attacksPerSecond', 'Ударов в секунду', 0.5, 20, 0.25, 'player', 'Общий темп атак игрока, включая удары по разным врагам.'],
+      ['player.attackInterval', 'Пауза между ударами (с)', 0.05, 2, 0.01, 'player', 'Сколько секунд проходит после удара, прежде чем герой может ударить снова. Пауза общая для всех врагов.'],
       ['player.acceleration', 'Ускорение', 1, 2000, 1, 'player', 'Как быстро игрок набирает заданную горизонтальную скорость.'],
       ['player.braking', 'Торможение', 1, 2000, 1, 'player', 'Как быстро игрок меняет направление и гасит текущую скорость.'],
       ['player.gravity', 'Гравитация', 1, 2000, 1, 'player', 'Сила падения игрока после прыжка и при отсутствии платформы под ним.'],
@@ -361,7 +362,7 @@ export class ThreeInspector {
       this.write(path, value);
       source.value = value;
       target.value = value;
-      if (path === 'player.attacksPerSecond') return;
+      if (path === 'player.attackInterval') return;
       if (category === 'cards') {
         if (this.game.choosingCard) this.game.openCardChoice();
         return;
@@ -500,7 +501,8 @@ export class ThreeInspector {
     await this.persistPresets('Пресет перезаписан в файле');
   }
 
-  applySettings(values) {
+  applySettings(saved) {
+    const values = migrateSettings(saved);
     for (const checkbox of this.root.querySelectorAll('[data-card-setting]')) {
       const path = checkbox.dataset.cardSetting;
       if (typeof values[path] !== 'boolean') continue;

@@ -1,4 +1,4 @@
-export const CONFIG_SCHEMA_VERSION = 1;
+export const CONFIG_SCHEMA_VERSION = 2;
 
 function isSettingValue(value) {
   return typeof value === 'number' && Number.isFinite(value) || typeof value === 'boolean';
@@ -19,6 +19,9 @@ export function migrateSettings(saved) {
   if (!saved || typeof saved !== 'object') return {};
   const version = Number(saved._schemaVersion) || 0;
   const migrated = { ...saved };
+  if (!Number.isFinite(migrated['player.attackInterval']) && Number.isFinite(saved['player.attacksPerSecond'])) {
+    migrated['player.attackInterval'] = 1 / Math.max(0.5, saved['player.attacksPerSecond']);
+  }
   if (version < CONFIG_SCHEMA_VERSION) migrated._schemaVersion = CONFIG_SCHEMA_VERSION;
   return migrated;
 }

@@ -871,7 +871,7 @@ export class ThreeGame {
 
   getRunCardStat(id) {
     if (id === 'speed') return this.getPlayerHorizontalSpeed();
-    const base = id === 'damage' ? this.damage : id === 'attackSpeed' ? Math.max(0.5, this.config.player.attacksPerSecond) : 0;
+    const base = id === 'damage' ? this.damage : id === 'attackSpeed' ? 1 / Math.max(0.05, this.config.player.attackInterval) : 0;
     return base + this.cardBonus(id);
   }
 
@@ -995,7 +995,6 @@ export class ThreeGame {
     this.hub.y = this.hubTopY();
     this.hubLanding.y = this.hub.y + this.hub.height + this.config.platforms.minGap;
     this.hubLanding.previousY = this.hubLanding.y;
-    this.hubLanding.active = true;
     this.applyHubView();
     this.applyHubLandingView();
     this.positionCardChoice();
@@ -1337,7 +1336,7 @@ export class ThreeGame {
     this.hub.y = this.hubTopY();
     this.hubLanding.y = this.hub.y + this.hub.height + this.config.platforms.minGap;
     this.hubLanding.previousY = this.hubLanding.y;
-    this.hubLanding.active = true;
+    this.setHubLandingActive(false);
     this.proceduralCliffs.reset(this.hub.y + this.runDepth - 104);
     this.proceduralCliffs.group.visible = this.config.platformSupports.procedural;
     this.updateTrailingPlatformShadows(this.runDepth, true);
@@ -1349,12 +1348,11 @@ export class ThreeGame {
   enterHub() {
     this.setMode(GAME_STATES.HUB);
     this.hubGroup.visible = true;
-    this.hubLandingGroup.visible = true;
+    this.setHubLandingActive(true);
     this.hub.y = this.hubTopY();
     this.hubLanding.y = this.hub.y + this.hub.height + this.config.platforms.minGap;
     this.hubLanding.previousY = this.hubLanding.y;
     this.updateHubRouteVisibility();
-    this.hubLandingGroup.visible = true;
     this.proceduralCliffsDirty = true;
     this.player.groundedOn = this.hub;
     this.player.x = 2;
@@ -1369,6 +1367,11 @@ export class ThreeGame {
     }
     this.hubMoving = false;
     this.resetRenderInterpolation();
+  }
+
+  setHubLandingActive(active) {
+    this.hubLanding.active = active;
+    this.hubLandingGroup.visible = active;
   }
 
   updateHubRouteVisibility() {
@@ -1397,7 +1400,6 @@ export class ThreeGame {
   exitHub() {
     this.setMode(GAME_STATES.RUN);
     this.hubMoving = true;
-    this.hubLandingGroup.visible = true;
     for (const platform of this.platforms) platform.node.visible = platform.active;
     this.player.groundedOn = null;
     this.player.y = this.hub.y - this.player.height;
@@ -1525,8 +1527,7 @@ export class ThreeGame {
       }
       if (this.hubLanding.y + this.hubLanding.height < -offscreenMargin) {
         this.retainPlatformShadow(this.hubLanding, this.hubLandingMesh, this.hubLandingGroup);
-        this.hubLandingGroup.visible = false;
-        this.hubLanding.active = false;
+        this.setHubLandingActive(false);
       }
       if (!this.hubGroup.visible && !this.hubLandingGroup.visible) {
         this.hubMoving = false;
@@ -1868,8 +1869,7 @@ export class ThreeGame {
     } else {
       enemy.health -= Math.max(1, this.damage + this.cardBonus('damage'));
     }
-    const attacksPerSecond = Math.max(0.5, this.config.player.attacksPerSecond) + this.cardBonus('attackSpeed');
-    this.attackCooldown = 1 / attacksPerSecond;
+    this.attackCooldown = 1 / this.getRunCardStat('attackSpeed');
     if (enemy.enemyType === 'fleeing' && enemy.health > 0) enemy.fleeing = true;
     enemy.hitFlightTimer = ENEMY_HIT_FLIGHT_SECONDS;
     enemy.view?.material?.emissive?.setHex(0xffd66b);

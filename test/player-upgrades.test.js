@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ThreeGame } from '../src/three-engine.js';
 import { CONFIG } from '../src/config.js';
+import { migrateSettings } from '../src/config-store.js';
 import { CARD_PRICE, REROLL_PRICE, RUN_CARDS, drawRunCards } from '../src/run-cards.js';
 
 test('all enemy types can be hit again from the same direction after landing', () => {
@@ -46,10 +47,10 @@ test('the player cooldown gates damage independently of the enemy animation', ()
   assert.equal(enemy.health, 2);
 });
 
-test('player attack speed limits hits across different enemies', () => {
+test('the configured attack interval limits hits across different enemies', () => {
   const game = Object.create(ThreeGame.prototype);
   game.config = structuredClone(CONFIG);
-  game.config.player.attacksPerSecond = 4;
+  game.config.player.attackInterval = 0.25;
   game.cardLevels = {};
   game.player = { x: 0, vx: 1 };
   game.damage = 1;
@@ -70,6 +71,12 @@ test('player attack speed limits hits across different enemies', () => {
   game.fixedUpdate(0.25);
   game.hitEnemy(first);
   assert.equal(game.attackCooldown, 1 / 4.5);
+});
+
+test('saved attack rates migrate to intervals and an explicit interval takes precedence', () => {
+  const legacy = { 'player.attacksPerSecond': 4 };
+  assert.equal(migrateSettings(legacy)['player.attackInterval'], 0.25);
+  assert.equal(migrateSettings({ ...legacy, 'player.attackInterval': 0.8 })['player.attackInterval'], 0.8);
 });
 
 test('portal cards charge once and can be skipped without spending crystals', () => {

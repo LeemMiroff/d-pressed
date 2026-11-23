@@ -11,7 +11,7 @@ export const CONFIG = Object.freeze({
     height: 240,
   },
   player: {
-    attacksPerSecond: 2,
+    attackInterval: 0.5,
     width: 8,
     height: 8,
     visualWidth: 10,
